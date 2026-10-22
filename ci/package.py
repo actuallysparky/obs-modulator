@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -15,7 +16,10 @@ p.add_argument("--output", type=Path, required=True)
 p.add_argument("--platform", choices=["macos-arm64", "macos-universal", "linux-x86_64"], required=True)
 a = p.parse_args()
 root = Path(__file__).resolve().parents[1]
-version = (root / "CMakeLists.txt").read_text().split("VERSION ", 1)[1].split()[0]
+match = re.search(r"project\(obs-modulator VERSION ([0-9]+\.[0-9]+\.[0-9]+)", (root / "CMakeLists.txt").read_text())
+if not match:
+    raise SystemExit("Missing project version")
+version = match.group(1)
 expected = "obs-modulator.plugin/Contents/MacOS/obs-modulator" if a.platform.startswith("macos") else "obs-modulator/bin/64bit/obs-modulator.so"
 if not (a.stage / expected).is_file():
     raise SystemExit("Staged module missing: " + expected)
