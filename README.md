@@ -17,10 +17,10 @@ Reopen OBS. Verify the current log contains `[obs-modulator] Loaded 0.1.1 (LFO o
 
 ## Try it
 
-1. Add **LFO Modulator** to a video source. New mappings start with their eye off.
+1. Add **LFO Modulator** to a video source. New mappings start with their gaze averted.
 2. Choose the target source, optional target filter, and a numeric property. This initializes both range endpoints to the property's current value.
 3. Set different minimum/maximum values, choose Sine, Triangle, Rising saw, Falling saw or Square, and set a full-cycle time (four seconds by default).
-4. Enable the eye. Modulation runs while the parent source is showing, including previews. Disabling or hiding holds the current value; reactivation starts a fresh cycle.
+4. Enable the eye, feel it pierce your soul. Modulation runs while the parent source is showing, including previews. Disabling or hiding holds the current value; reactivation starts a fresh cycle.
 5. Move the target manually. The LFO should stop, preserve your value, turn its eye off and explain why. Re-enable to restart; **Restore starting value and disable** returns to the value captured on activation.
 
 Duplicate the LFO filter for more controls. One active LFO owns each target/property. Transforms, mixer volume and application settings are outside this version.
