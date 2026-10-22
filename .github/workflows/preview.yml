@@ -25,10 +25,11 @@ jobs:
         with:
           persist-credentials: false
       - name: Install pinned OBS SDK/runtime
+        timeout-minutes: 10
         run: |
           python3 ci/download.py obs-linux /tmp/obs.deb
-          sudo apt-get update
-          sudo apt-get install -y /tmp/obs.deb libsimde-dev ninja-build xvfb libgl1-mesa-dri mesa-utils
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y /tmp/obs.deb libsimde-dev ninja-build xvfb libgl1-mesa-dri mesa-utils
           sudo ldconfig
       - name: Prepare Shaderfilter fixture
         run: |

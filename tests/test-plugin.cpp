@@ -18,7 +18,7 @@ static int checks;
 static std::mutex queue_mutex;
 static std::deque<std::pair<obs_task_t,void *>> tasks;
 static std::atomic<int> updates{0};
-static size_t peak_queue=0;
+static std::atomic<size_t> peak_queue{0};
 static std::atomic<int> pixel{255};
 static std::atomic<int> rendered{0},delivered{0};
 static uint64_t rss() { return test_platform::resident_bytes(); }
@@ -32,7 +32,7 @@ static void add_test_data(const char *path) { if(path[0])obs_add_data_path(path)
 static void ui_task(obs_task_t task,void *param,bool wait)
 {
   if(wait){task(param);return;}
-  std::lock_guard<std::mutex> lock(queue_mutex);tasks.emplace_back(task,param);peak_queue=std::max(peak_queue,tasks.size());
+  std::lock_guard<std::mutex> lock(queue_mutex);tasks.emplace_back(task,param);peak_queue=std::max(peak_queue.load(),tasks.size());
 }
 static void drain()
 {
@@ -58,6 +58,20 @@ template<typename Predicate> static bool wait_for(Predicate predicate)
 static void next_frames()
 {
   const int before=delivered.load(); WAIT(delivered.load()>=before+2);
+}
+// The isolated fixture has only the controller's UI pump after libobs startup.
+// Step exactly one queued pump to assert restart phase without wall-clock races.
+static void next_controller_pump()
+{
+  auto end=std::chrono::steady_clock::now()+std::chrono::seconds(5);
+  std::pair<obs_task_t,void *> task{nullptr,nullptr};
+  while(std::chrono::steady_clock::now()<end){
+    {std::lock_guard<std::mutex> lock(queue_mutex);
+      if(!tasks.empty()){task=tasks.front();tasks.pop_front();}}
+    if(task.first)break;
+    test_platform::process_events();std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  CHECK(task.first);task.first(task.second);
 }
 static const char *source_name(void *){return "Modulator test source";}
 static void *source_create(obs_data_t *,obs_source_t *s){return s;}
@@ -124,24 +138,24 @@ int main(int argc,char **argv){
   obs_add_raw_video_callback(&scale,video_frame,nullptr);
   obs_source_inc_showing(source);run(.1);
   auto *lfo=controller(source);obs_source_set_enabled(lfo,true);run(.11);
-  CHECK(obs_source_enabled(lfo));CHECK(value(source)>0 && value(source)<1);WAIT(status(lfo).find("Running")==0);
+  CHECK(obs_source_enabled(lfo));WAIT(status(lfo).find("Running")==0);WAIT(value(source)>0 && value(source)<1);
   change(source,"other",.8);run(.08);CHECK(obs_source_enabled(lfo));CHECK(value(source,"other")==.8);
   change(source,"gain",.937);run(.08);WAIT(!obs_source_enabled(lfo));CHECK(value(source)==.937);
   CHECK(status(lfo).find("Paused")==0);
-  obs_source_set_enabled(lfo,true);run(.06);CHECK(obs_source_enabled(lfo));CHECK(value(source)<.25);
+  obs_source_set_enabled(lfo,true);next_controller_pump();CHECK(obs_source_enabled(lfo));CHECK(value(source)==0);
   obs_source_set_enabled(lfo,false);run(.05);double held=value(source);run(.1);next_frames();CHECK(value(source)==held);
   WAIT(status(lfo).find("Disabled")==0);
-  obs_source_set_enabled(lfo,true);run(.07);obs_source_set_enabled(lfo,false);obs_source_set_enabled(lfo,true);run(.05);CHECK(value(source)<.25);
+  obs_source_set_enabled(lfo,true);run(.07);obs_source_set_enabled(lfo,false);obs_source_set_enabled(lfo,true);next_controller_pump();CHECK(value(source)==0);
   obs_source_set_enabled(lfo,true);run(.08);obs_set_output_source(0,nullptr);obs_source_dec_showing(source);run(.08);
   held=value(source);run(.1);next_frames();CHECK(value(source)==held);CHECK(obs_source_enabled(lfo));
-  obs_source_inc_showing(source);obs_set_output_source(0,source);run(.05);CHECK(value(source)<.3);
+  obs_source_inc_showing(source);obs_set_output_source(0,source);next_controller_pump();CHECK(value(source)==0);
   auto *props=obs_source_properties(lfo);auto *saved=obs_source_get_settings(lfo);
   obs_properties_apply_settings(props,saved);CHECK(std::string(obs_data_get_string(saved,"property"))=="gain");
   CHECK(obs_data_get_double(saved,"maximum")==1);obs_data_release(saved);
   obs_property_button_clicked(obs_properties_get(props,"restart"),lfo);
   // Button return value means refresh, not success: restart deliberately returns false.
   obs_properties_destroy(props);
-  run(.07);CHECK(value(source)<.3);
+  next_controller_pump();CHECK(value(source)==0);
   props=obs_source_properties(lfo);obs_property_button_clicked(obs_properties_get(props,"restore"),lfo);obs_properties_destroy(props);
   run(.07);WAIT(!obs_source_enabled(lfo));WAIT(value(source)==held);
   obs_source_set_enabled(lfo,true);run(.07);
@@ -158,7 +172,7 @@ int main(int argc,char **argv){
   // Native integer target, save/load and a rejected invalid period.
   integer_mode=true;lfo=controller(source);d=obs_source_get_settings(lfo);
   obs_data_set_int(d,"property_type",1);obs_data_set_double(d,"maximum",10);obs_source_update(lfo,d);obs_data_release(d);
-  obs_source_set_enabled(lfo,true);run(.12);CHECK(obs_source_enabled(lfo));CHECK(value(source)==std::round(value(source)));
+  obs_source_set_enabled(lfo,true);run(.12);CHECK(obs_source_enabled(lfo));WAIT(value(source)==std::round(value(source)));
   auto *serialized=obs_save_source(lfo);CHECK(serialized);
   release_controller(source,lfo);lfo=obs_load_private_source(serialized);obs_data_release(serialized);CHECK(lfo);
   obs_source_filter_add(source,lfo);run(.08);CHECK(obs_source_enabled(lfo));
@@ -208,7 +222,7 @@ int main(int argc,char **argv){
   const double active_cpu_start=cpu();uint64_t rss_start=rss(),rss_min=rss_start,rss_max=rss_start;
   const double duration=soak>0 ? soak:1;
   for(double elapsed=0;elapsed<duration;){double chunk=std::min(30.0,duration-elapsed);run(chunk);elapsed+=chunk;uint64_t bytes=rss();rss_min=std::min(bytes,rss_min);rss_max=std::max(bytes,rss_max);
-    if(soak>0){printf("SOAK %.0f/%.0f seconds; frames=%u lagged=%u rss=%llu queue_peak=%zu\n",elapsed,duration,obs_get_total_frames()-frames,obs_get_lagged_frames()-lagged,static_cast<unsigned long long>(bytes),peak_queue);fflush(stdout);}}
+    if(soak>0){printf("SOAK %.0f/%.0f seconds; frames=%u lagged=%u rss=%llu queue_peak=%zu\n",elapsed,duration,obs_get_total_frames()-frames,obs_get_lagged_frames()-lagged,static_cast<unsigned long long>(bytes),peak_queue.load());fflush(stdout);}}
   if(soak==0)WAIT(updates.load()>before);
   const double active_cpu=cpu()-active_cpu_start;
   const uint64_t active_render_ns=obs_get_average_frame_time_ns();
@@ -220,6 +234,6 @@ int main(int argc,char **argv){
   obs_remove_raw_video_callback(video_frame,nullptr);obs_set_output_source(0,nullptr);
   obs_source_dec_showing(source);obs_source_release(source);run(.1);
   drain();
-  if(argc>=10){FILE *f=fopen(argv[9],"w");CHECK(f);fprintf(f,"{\"checks\":%d,\"soak_seconds\":%.3f,\"mapping_count\":32,\"width\":1920,\"height\":1080,\"fps\":60,\"baseline_frames\":%u,\"baseline_lagged\":%u,\"baseline_updates\":%d,\"active_frames\":%u,\"active_lagged\":%u,\"batched_target_updates\":%d,\"baseline_cpu_seconds\":%.6f,\"active_cpu_seconds\":%.6f,\"baseline_render_ns\":%llu,\"active_render_ns\":%llu,\"rss_start\":%llu,\"rss_min\":%llu,\"rss_max\":%llu,\"rss_end\":%llu,\"queue_peak\":%zu}\n",checks,soak,baseline_n,baseline_lag,baseline_updates,frame_n,lag_n,written,baseline_cpu,active_cpu,static_cast<unsigned long long>(baseline_render_ns),static_cast<unsigned long long>(active_render_ns),static_cast<unsigned long long>(rss_start),static_cast<unsigned long long>(rss_min),static_cast<unsigned long long>(rss_max),static_cast<unsigned long long>(rss()),peak_queue);fclose(f);}
+  if(argc>=10){FILE *f=fopen(argv[9],"w");CHECK(f);fprintf(f,"{\"checks\":%d,\"soak_seconds\":%.3f,\"mapping_count\":32,\"width\":1920,\"height\":1080,\"fps\":60,\"baseline_frames\":%u,\"baseline_lagged\":%u,\"baseline_updates\":%d,\"active_frames\":%u,\"active_lagged\":%u,\"batched_target_updates\":%d,\"baseline_cpu_seconds\":%.6f,\"active_cpu_seconds\":%.6f,\"baseline_render_ns\":%llu,\"active_render_ns\":%llu,\"rss_start\":%llu,\"rss_min\":%llu,\"rss_max\":%llu,\"rss_end\":%llu,\"queue_peak\":%zu}\n",checks,soak,baseline_n,baseline_lag,baseline_updates,frame_n,lag_n,written,baseline_cpu,active_cpu,static_cast<unsigned long long>(baseline_render_ns),static_cast<unsigned long long>(active_render_ns),static_cast<unsigned long long>(rss_start),static_cast<unsigned long long>(rss_min),static_cast<unsigned long long>(rss_max),static_cast<unsigned long long>(rss()),peak_queue.load());fclose(f);}
   obs_shutdown();std::printf("%d real-plugin checks passed\n",checks);return 0;
 }
