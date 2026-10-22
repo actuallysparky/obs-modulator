@@ -45,7 +45,7 @@ jobs:
           cmake --preset linux-x86_64 -DMODULATOR_SHADERFILTER="$shader_module" -DMODULATOR_SHADERFILTER_DATA="$shader_data"
           cmake --build build-linux
       - name: Core and rendered integration tests
-        run: xvfb-run -a -s '-screen 0 1920x1080x24' ctest --test-dir build-linux --output-on-failure
+        run: xvfb-run -a -s '-screen 0 1920x1080x24' ctest --test-dir build-linux --output-on-failure --repeat until-fail:3
       - name: Optional 32-mapping soak
         env:
           SOAK_SECONDS: ${{ inputs.soak_seconds || '0' }}

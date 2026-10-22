@@ -35,6 +35,6 @@ export MODULATOR_OBS_GRAPHICS="$MODULATOR_OBS_FRAMEWORKS/libobs-opengl.dylib"
 export MODULATOR_OBS_DATA="$PWD/_local/runtime/OBS.app/Contents/Resources/data/libobs"
 cmake --preset macos-universal -DMODULATOR_SHADERFILTER="$shader_bundle/Contents/MacOS/obs-shaderfilter" -DMODULATOR_SHADERFILTER_DATA="$shader_bundle/Contents/Resources"
 cmake --build build-macos
-ctest --test-dir build-macos --output-on-failure
+ctest --test-dir build-macos --output-on-failure --repeat until-fail:3
 cmake --install build-macos --prefix "$PWD/stage"
 python3 ci/package.py --stage stage --guide README.md --output dist --platform macos-universal
