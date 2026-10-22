@@ -1,10 +1,10 @@
 # OBS Modulator
 
-I made this to bring LFO control to OBS effects. Pick a numeric source or filter setting, choose a waveform, cycle time and range, then enable the filter eye. If you move the target yourself, the LFO pauses and turns its eye off so you can take over.
+I made this to bring LFO control to OBS effects. Pick a numeric source or filter setting, choose a waveform, cycle time and range, then enable the filter. As the filter's eye gazes deeply into your soul, gaze back and see the slider wiggle like salmon swimming upstream. If you move the target yourself, the LFO pauses and averts its gaze so you can take over.
 
 ## Preview builds
 
-Version 0.1.1 preview targets OBS 32.2.2. The Mac bundle contains Apple Silicon and Intel slices. The Linux archive targets native Ubuntu/Kubuntu 24.04 x86-64 OBS; it is not a Flatpak package. Check the accompanying candidate report for the architectures and runtime tests actually completed. Windows builds and Flatpak packaging are separate work items. This preview has no MIDI dependency.
+Version 0.1.1 preview targets OBS 32.2.2. The Mac bundle contains Apple Silicon and Intel slices. The Linux archive targets native Ubuntu/Kubuntu 24.04 x86-64 OBS; it is not a Flatpak package. Check the accompanying candidate report for the architectures and runtime tests actually completed. Windows builds and Flatpak packaging are separate work items. 
 
 ## Install or update
 
@@ -45,4 +45,4 @@ For Mac, supply a universal libobs SDK through `MODULATOR_SDK`, plus `MODULATOR_
 
 ## Credits
 
-Built using [OBS Studio/libobs](https://github.com/obsproject/obs-studio) and tested against [Exeldro's obs-shaderfilter](https://github.com/exeldro/obs-shaderfilter). The workflow was inspired by [Move Transition](https://github.com/exeldro/obs-move-transition). OBS Modulator's LFO and mapping implementation is separate; those plugins are not bundled. Third-party build inputs retain their upstream licenses. The project's public distribution license will be finalized before public release.
+Built using [OBS Studio/libobs](https://github.com/obsproject/obs-studio) and tested against [Exeldro's obs-shaderfilter](https://github.com/exeldro/obs-shaderfilter). The workflow was inspired by [Move Transition](https://github.com/exeldro/obs-move-transition). OBS Modulator's LFO and mapping implementation is separate; those plugins are not bundled. Third-party build inputs retain their upstream licenses.
