@@ -1,6 +1,6 @@
 # OBS Modulator
 
-I made this to bring LFO control to OBS effects. Pick a numeric source or filter setting, choose a waveform, cycle time and range, then enable the filter. As the filter's eye gazes deeply into your soul, gaze back and see the slider wiggle like salmon swimming upstream. If you move the target yourself, the LFO pauses and averts its gaze so you can take over.
+I made this to bring risk and excitement to your streams in the form of LFO control to OBS effects delivered by alpha software. Pick a numeric source or filter setting, choose a waveform, cycle time and range, then enable the filter. As the filter's eye gazes deeply into your soul, gaze back and see the slider wiggle like salmon swimming upstream. If you move the target yourself, the LFO pauses and averts its gaze so you can take over.
 
 ## Preview builds
 
