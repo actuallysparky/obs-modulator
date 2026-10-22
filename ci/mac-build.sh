@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Sparky and OBS Modulator contributors
+# SPDX-License-Identifier: GPL-2.0-or-later
 set -euo pipefail
 # Run from the checkout root. All runtime/SDK inputs stay inside ignored _local.
 mkdir -p _local/deps _local/runtime

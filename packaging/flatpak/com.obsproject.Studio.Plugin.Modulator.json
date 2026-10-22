@@ -1,0 +1,46 @@
+{
+  "id": "com.obsproject.Studio.Plugin.Modulator",
+  "branch": "stable",
+  "runtime": "com.obsproject.Studio",
+  "runtime-version": "stable",
+  "sdk": "org.freedesktop.Sdk//25.08",
+  "build-extension": true,
+  "separate-locales": false,
+  "build-options": {
+    "prefix": "/app/plugins/Modulator"
+  },
+  "modules": [
+    {
+      "name": "obs-modulator",
+      "buildsystem": "cmake-ninja",
+      "builddir": true,
+      "config-opts": [
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DMODULATOR_FLATPAK=ON",
+        "-DBUILD_PLUGIN_TESTS=OFF",
+        "-DBUILD_TESTING=ON"
+      ],
+      "run-tests": true,
+      "test-rule": "test",
+      "sources": [
+        {
+          "type": "dir",
+          "path": "../..",
+          "skip": [
+            ".git",
+            "AGENTS.md",
+            "_local",
+            "build-core",
+            "build-linux",
+            "build-macos",
+            "build-flatpak",
+            ".flatpak-builder",
+            "flatpak-repo",
+            "stage",
+            "dist"
+          ]
+        }
+      ]
+    }
+  ]
+}

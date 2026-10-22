@@ -37,6 +37,8 @@ jobs:
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update
           sudo env DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y --no-install-recommends /tmp/obs.deb libsimde-dev ninja-build xvfb libgl1-mesa-dri mesa-utils
           sudo ldconfig
+      - name: Test corresponding-source packaging
+        run: python3 tests/test-packaging.py
       - name: Prepare Shaderfilter fixture
         run: |
           python3 ci/download.py shaderfilter-linux /tmp/shaderfilter.tar.gz

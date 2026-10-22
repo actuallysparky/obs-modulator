@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 Sparky and OBS Modulator contributors
+// SPDX-License-Identifier: GPL-2.0-or-later
 #include <obs-module.h>
 #include <util/platform.h>
 #include "lfo.hpp"

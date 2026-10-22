@@ -4,3 +4,6 @@ build*/
 stage/
 dist/
 __pycache__/
+.flatpak-builder/
+flatpak-repo/
+flatpak-smoke/

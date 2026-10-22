@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 Sparky and OBS Modulator contributors
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Package an already staged plugin with the reviewed guide and per-file hashes."""
 import argparse
 import hashlib
@@ -8,6 +10,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+from source import export_source
 
 p = argparse.ArgumentParser()
 p.add_argument("--stage", type=Path, required=True)
@@ -46,6 +49,8 @@ with tempfile.TemporaryDirectory() as t:
     payload = Path(t) / name
     shutil.copytree(a.stage, payload)
     shutil.copy2(a.guide, payload / "README.md")
+    shutil.copy2(root / "LICENSE", payload / "LICENSE")
+    export_source(root, a.guide, payload / "source.tar.gz")
     files = {str(x.relative_to(payload)): hashlib.sha256(x.read_bytes()).hexdigest() for x in sorted(payload.rglob("*")) if x.is_file()}
     manifest = {"version": version, "channel": "preview", "platform": a.platform, "obs_build_version": "32.2.2", "source_commit": sha, "dependencies_lock_sha256": hashlib.sha256((root / "ci/dependencies.json").read_bytes()).hexdigest(), "files": files}
     (payload / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")

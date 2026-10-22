@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-License-Identifier: CC0-1.0 -->
+<component type="addon">
+  <id>com.obsproject.Studio.Plugin.Modulator</id>
+  <extends>com.obsproject.Studio</extends>
+  <name>OBS Modulator</name>
+  <summary>LFO automation for numeric OBS source and filter settings</summary>
+  <developer id="io.github.actuallysparky"><name>Sparky</name></developer>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-2.0-or-later</project_license>
+  <url type="homepage">https://github.com/actuallysparky/obs-modulator</url>
+  <description><p>Choose a waveform, cycle time and range to animate a numeric source or filter setting. Moving the target manually pauses the controller.</p></description>
+  <releases><release version="0.1.1" date="2026-10-22"/></releases>
+</component>

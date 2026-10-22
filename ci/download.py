@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 Sparky and OBS Modulator contributors
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Download only a named, hash-locked build input."""
 import argparse
 import hashlib
