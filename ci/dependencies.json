@@ -1,0 +1,34 @@
+{
+  "obs_version": "32.2.2",
+  "shaderfilter_version": "2.6.0",
+  "assets": {
+    "obs-linux": {
+      "url": "https://github.com/obsproject/obs-studio/releases/download/32.2.2/OBS-Studio-32.2.2-Ubuntu-24.04-x86_64.deb",
+      "sha256": "b6557ca2059287210332accc94c267094050489cffffc5c832e746e3a418dab0"
+    },
+    "obs-source": {
+      "url": "https://github.com/obsproject/obs-studio/releases/download/32.2.2/OBS-Studio-32.2.2-Sources.tar.gz",
+      "sha256": "ec81fb66b03e75ddb3076b576f62679c39262e0e9960cef3e17a40dc5d68e6b4"
+    },
+    "obs-mac-intel": {
+      "url": "https://github.com/obsproject/obs-studio/releases/download/32.2.2/OBS-Studio-32.2.2-macOS-Intel.dmg",
+      "sha256": "f8d8afe3dffdc86efa0698c02ff0c997866bac3e6208ddaf56d37108baacf197"
+    },
+    "obs-mac-arm": {
+      "url": "https://github.com/obsproject/obs-studio/releases/download/32.2.2/OBS-Studio-32.2.2-macOS-Apple.dmg",
+      "sha256": "920d6f26703d2df6e4085bd3c1cbed30488325084136c7a6e9e37021fbd6aaf7"
+    },
+    "shaderfilter-linux": {
+      "url": "https://github.com/exeldro/obs-shaderfilter/releases/download/2.6.0/obs-shaderfilter-2.6.0-ubuntu-22.04.tar.gz",
+      "sha256": "c25cd21b64359a7631ca033627094e51414079a0ece01ddfc09f64be42e27c8f"
+    },
+    "simde": {
+      "url": "https://codeload.github.com/simd-everywhere/simde/tar.gz/refs/tags/v0.8.2",
+      "sha256": "ed2a3268658f2f2a9b5367628a85ccd4cf9516460ed8604eed369653d49b25fb"
+    },
+    "shaderfilter-mac": {
+      "url": "https://github.com/exeldro/obs-shaderfilter/releases/download/2.6.0/obs-shaderfilter-2.6.0-macos-universal.pkg",
+      "sha256": "d12bd1656f83377e21f6828fccc3013d13cdd151e6f74fba26568861f28e8f64"
+    }
+  }
+}

@@ -1,0 +1,48 @@
+{
+  "version": 5,
+  "configurePresets": [
+    {
+      "name": "core",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-core",
+      "cacheVariables": {
+        "BUILD_OBS_PLUGIN": "OFF",
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+      }
+    },
+    {
+      "name": "linux-x86_64",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-linux",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_PREFIX_PATH": "/usr/local",
+        "MODULATOR_GRAPHICS_MODULE": "/usr/local/lib/x86_64-linux-gnu/libobs-opengl.so",
+        "MODULATOR_OBS_DATA": "/usr/local/share/obs/libobs"
+      }
+    },
+    {
+      "name": "macos-universal",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-macos",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Darwin"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_OSX_ARCHITECTURES": "arm64;x86_64",
+        "libobs_DIR": "$env{MODULATOR_SDK}",
+        "MODULATOR_MAC_RPATH": "$env{MODULATOR_OBS_FRAMEWORKS}",
+        "MODULATOR_GRAPHICS_MODULE": "$env{MODULATOR_OBS_GRAPHICS}",
+        "MODULATOR_OBS_DATA": "$env{MODULATOR_OBS_DATA}"
+      }
+    }
+  ]
+}

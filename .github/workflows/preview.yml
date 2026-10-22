@@ -1,0 +1,90 @@
+name: Preview builds
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      soak_seconds:
+        description: "Optional graphics soak duration (0 = focused suite)"
+        default: "0"
+permissions:
+  contents: read
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    env:
+      LIBGL_ALWAYS_SOFTWARE: "1"
+      LD_LIBRARY_PATH: /usr/local/lib/x86_64-linux-gnu
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Install pinned OBS SDK/runtime
+        run: |
+          python3 ci/download.py obs-linux /tmp/obs.deb
+          sudo apt-get update
+          sudo apt-get install -y /tmp/obs.deb libsimde-dev ninja-build xvfb libgl1-mesa-dri mesa-utils
+          sudo ldconfig
+      - name: Prepare Shaderfilter fixture
+        run: |
+          python3 ci/download.py shaderfilter-linux /tmp/shaderfilter.tar.gz
+          mkdir -p build-fixtures/shaderfilter
+          tar -xzf /tmp/shaderfilter.tar.gz -C build-fixtures/shaderfilter
+      - name: Configure and build
+        run: |
+          shader_module=$(find "$PWD/build-fixtures/shaderfilter" -name obs-shaderfilter.so -print -quit)
+          shader_data="$PWD/build-fixtures/shaderfilter/obs-shaderfilter/data"
+          test -n "$shader_module"
+          test -d "$shader_data"
+          cmake --preset linux-x86_64 -DMODULATOR_SHADERFILTER="$shader_module" -DMODULATOR_SHADERFILTER_DATA="$shader_data"
+          cmake --build build-linux
+      - name: Core and rendered integration tests
+        run: xvfb-run -a -s '-screen 0 1920x1080x24' ctest --test-dir build-linux --output-on-failure
+      - name: Optional 32-mapping soak
+        env:
+          SOAK_SECONDS: ${{ inputs.soak_seconds || '0' }}
+        run: |
+          python3 -c 'import os; n=int(os.environ["SOAK_SECONDS"]); assert 0 <= n <= 1800'
+          if [ "$SOAK_SECONDS" != 0 ]; then
+            shader_module=$(find "$PWD/build-fixtures/shaderfilter" -name obs-shaderfilter.so -print -quit)
+            shader_data="$PWD/build-fixtures/shaderfilter/obs-shaderfilter/data"
+            xvfb-run -a -s '-screen 0 1920x1080x24' build-linux/test-plugin "$PWD/build-linux/obs-modulator.so" "$PWD/data" "$PWD/tests/test.shader" /usr/local/lib/x86_64-linux-gnu/libobs-opengl.so /usr/local/share/obs/libobs "$shader_module" "$shader_data" "$SOAK_SECONDS" "$PWD/build-linux/soak.json"
+          fi
+      - name: Stage native Linux preview
+        run: |
+          cmake --install build-linux --prefix "$PWD/stage"
+          python3 ci/package.py --stage stage --guide README.md --output dist --platform linux-x86_64
+          ldd stage/obs-modulator/bin/64bit/obs-modulator.so > dist/dependencies.txt
+          if grep -q 'not found' dist/dependencies.txt; then exit 1; fi
+      - name: Retain artifacts and test evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: linux-x86_64-preview
+          path: |
+            dist/
+            build-linux/Testing/Temporary/LastTest.log
+            build-linux/soak.json
+          retention-days: 14
+          if-no-files-found: error
+  macos:
+    runs-on: macos-15-intel
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Build universal and test natively on Intel
+        run: bash ci/mac-build.sh
+      - name: Retain artifacts and test evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: macos-universal-preview
+          path: |
+            dist/
+            build-macos/Testing/Temporary/LastTest.log
+          retention-days: 14
+          if-no-files-found: error

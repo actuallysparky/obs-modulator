@@ -1,0 +1,6 @@
+_local/
+build*/
+.DS_Store
+stage/
+dist/
+__pycache__/
