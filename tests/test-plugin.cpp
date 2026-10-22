@@ -46,6 +46,19 @@ static void run(double seconds)
   while(std::chrono::steady_clock::now()<end){drain();test_platform::process_events();std::this_thread::sleep_for(std::chrono::milliseconds(1));}
   drain();
 }
+// Frame-paced effects can take longer than a short sleep on software renderers.
+// Preserve each state assertion, but wait for its observable result with a deadline.
+template<typename Predicate> static bool wait_for(Predicate predicate)
+{
+  auto end=std::chrono::steady_clock::now()+std::chrono::seconds(5);
+  while(!predicate() && std::chrono::steady_clock::now()<end)run(.01);
+  return predicate();
+}
+#define WAIT(x) CHECK(wait_for([&](){return (x);}))
+static void next_frames()
+{
+  const int before=delivered.load(); WAIT(delivered.load()>=before+2);
+}
 static const char *source_name(void *){return "Modulator test source";}
 static void *source_create(obs_data_t *,obs_source_t *s){return s;}
 static void source_destroy(void *){}
@@ -111,16 +124,16 @@ int main(int argc,char **argv){
   obs_add_raw_video_callback(&scale,video_frame,nullptr);
   obs_source_inc_showing(source);run(.1);
   auto *lfo=controller(source);obs_source_set_enabled(lfo,true);run(.11);
-  CHECK(obs_source_enabled(lfo));CHECK(value(source)>0 && value(source)<1);CHECK(status(lfo).find("Running")==0);
+  CHECK(obs_source_enabled(lfo));CHECK(value(source)>0 && value(source)<1);WAIT(status(lfo).find("Running")==0);
   change(source,"other",.8);run(.08);CHECK(obs_source_enabled(lfo));CHECK(value(source,"other")==.8);
-  change(source,"gain",.937);run(.08);CHECK(!obs_source_enabled(lfo));CHECK(value(source)==.937);
+  change(source,"gain",.937);run(.08);WAIT(!obs_source_enabled(lfo));CHECK(value(source)==.937);
   CHECK(status(lfo).find("Paused")==0);
   obs_source_set_enabled(lfo,true);run(.06);CHECK(obs_source_enabled(lfo));CHECK(value(source)<.25);
-  obs_source_set_enabled(lfo,false);run(.05);double held=value(source);run(.1);CHECK(value(source)==held);
-  CHECK(status(lfo).find("Disabled")==0);
+  obs_source_set_enabled(lfo,false);run(.05);double held=value(source);run(.1);next_frames();CHECK(value(source)==held);
+  WAIT(status(lfo).find("Disabled")==0);
   obs_source_set_enabled(lfo,true);run(.07);obs_source_set_enabled(lfo,false);obs_source_set_enabled(lfo,true);run(.05);CHECK(value(source)<.25);
   obs_source_set_enabled(lfo,true);run(.08);obs_set_output_source(0,nullptr);obs_source_dec_showing(source);run(.08);
-  held=value(source);run(.1);CHECK(value(source)==held);CHECK(obs_source_enabled(lfo));
+  held=value(source);run(.1);next_frames();CHECK(value(source)==held);CHECK(obs_source_enabled(lfo));
   obs_source_inc_showing(source);obs_set_output_source(0,source);run(.05);CHECK(value(source)<.3);
   auto *props=obs_source_properties(lfo);auto *saved=obs_source_get_settings(lfo);
   obs_properties_apply_settings(props,saved);CHECK(std::string(obs_data_get_string(saved,"property"))=="gain");
@@ -130,17 +143,17 @@ int main(int argc,char **argv){
   obs_properties_destroy(props);
   run(.07);CHECK(value(source)<.3);
   props=obs_source_properties(lfo);obs_property_button_clicked(obs_properties_get(props,"restore"),lfo);obs_properties_destroy(props);
-  run(.07);CHECK(!obs_source_enabled(lfo));CHECK(value(source)==held);
+  run(.07);WAIT(!obs_source_enabled(lfo));WAIT(value(source)==held);
   obs_source_set_enabled(lfo,true);run(.07);
-  auto *conflict=controller(source);obs_source_set_enabled(conflict,true);run(.07);CHECK(!obs_source_enabled(conflict));CHECK(obs_source_enabled(lfo));
+  auto *conflict=controller(source);obs_source_set_enabled(conflict,true);run(.07);WAIT(!obs_source_enabled(conflict));CHECK(obs_source_enabled(lfo));
   d=obs_source_get_settings(conflict);obs_data_set_string(d,"property","other");obs_source_update(conflict,d);obs_data_release(d);
   obs_source_set_enabled(conflict,true);run(.07);CHECK(obs_source_enabled(conflict));
   d=obs_source_get_settings(conflict);obs_data_set_string(d,"property","gain");obs_source_update(conflict,d);obs_data_release(d);
-  run(.07);CHECK(!obs_source_enabled(conflict));CHECK(obs_source_enabled(lfo));
+  run(.07);WAIT(!obs_source_enabled(conflict));CHECK(obs_source_enabled(lfo));
   release_controller(source,conflict);
   obs_source_set_name(source,"renamed source");run(.05);CHECK(obs_source_enabled(lfo));
-  hide_gain=true;obs_source_update_properties(source);run(.08);CHECK(!obs_source_enabled(lfo));hide_gain=false;
-  obs_source_set_enabled(lfo,true);run(.05);integer_mode=true;obs_source_update_properties(source);run(.08);CHECK(!obs_source_enabled(lfo));integer_mode=false;
+  hide_gain=true;obs_source_update_properties(source);run(.08);WAIT(!obs_source_enabled(lfo));hide_gain=false;
+  obs_source_set_enabled(lfo,true);run(.05);integer_mode=true;obs_source_update_properties(source);run(.08);WAIT(!obs_source_enabled(lfo));integer_mode=false;
   release_controller(source,lfo);
   // Native integer target, save/load and a rejected invalid period.
   integer_mode=true;lfo=controller(source);d=obs_source_get_settings(lfo);
@@ -150,10 +163,10 @@ int main(int argc,char **argv){
   release_controller(source,lfo);lfo=obs_load_private_source(serialized);obs_data_release(serialized);CHECK(lfo);
   obs_source_filter_add(source,lfo);run(.08);CHECK(obs_source_enabled(lfo));
   d=obs_source_get_settings(lfo);CHECK(obs_data_get_int(d,"property_type")==1);CHECK(obs_data_get_double(d,"maximum")==10);obs_data_release(d);
-  change(lfo,"period",0);run(.06);CHECK(!obs_source_enabled(lfo));release_controller(source,lfo);integer_mode=false;
+  change(lfo,"period",0);run(.06);WAIT(!obs_source_enabled(lfo));release_controller(source,lfo);integer_mode=false;
   auto *remote=obs_source_create("modulator_test_source","remote target",nullptr,nullptr);CHECK(remote);
   lfo=controller(source);d=obs_source_get_settings(lfo);obs_data_set_string(d,"source_uuid",obs_source_get_uuid(remote));obs_source_update(lfo,d);obs_data_release(d);
-  obs_source_set_enabled(lfo,true);run(.07);CHECK(obs_source_enabled(lfo));obs_source_remove(remote);run(.07);CHECK(!obs_source_enabled(lfo));
+  obs_source_set_enabled(lfo,true);run(.07);CHECK(obs_source_enabled(lfo));obs_source_remove(remote);run(.07);WAIT(!obs_source_enabled(lfo));
   props=obs_source_properties(lfo);saved=obs_source_get_settings(lfo);std::string missing=obs_data_get_string(saved,"source_uuid");
   obs_properties_apply_settings(props,saved);CHECK(std::string(obs_data_get_string(saved,"source_uuid"))==missing);
   obs_data_release(saved);obs_properties_destroy(props);obs_source_release(remote);release_controller(source,lfo);
@@ -167,14 +180,14 @@ int main(int argc,char **argv){
   auto *shader=obs_source_create("shader_filter","test shader",d,nullptr);obs_data_release(d);CHECK(shader);obs_source_filter_add(source,shader);run(.3);
   props=obs_source_properties(shader);CHECK(obs_properties_get(props,"gain"));obs_properties_destroy(props);
   lfo=controller(source,"gain",obs_source_get_uuid(shader));obs_source_set_enabled(lfo,true);run(.15);
-  CHECK(obs_source_enabled(lfo));CHECK(value(shader)!=.37);CHECK(value(shader)>=0 && value(shader)<=1);
-  CHECK(delivered.load()>0);CHECK(rendered.load()>0);CHECK(pixel.load()<200);
+  CHECK(obs_source_enabled(lfo));WAIT(value(shader)!=.37);CHECK(value(shader)>=0 && value(shader)<=1);
+  WAIT(delivered.load()>0);CHECK(rendered.load()>0);WAIT(pixel.load()<200);
   change(shader,"other",.2);run(.05);CHECK(obs_source_enabled(lfo));
-  change(shader,"gain",.99);run(.07);CHECK(!obs_source_enabled(lfo));CHECK(value(shader)==.99);
+  change(shader,"gain",.99);run(.07);WAIT(!obs_source_enabled(lfo));CHECK(value(shader)==.99);
   obs_source_set_enabled(lfo,true);run(.06);props=obs_source_properties(shader);
   auto *reload=obs_properties_get(props,"reload_effect");CHECK(reload);obs_property_button_clicked(reload,shader);obs_properties_destroy(props);
   run(.2);CHECK(obs_source_enabled(lfo));
-  obs_source_filter_remove(source,shader);obs_source_release(shader);run(.07);CHECK(!obs_source_enabled(lfo));release_controller(source,lfo);
+  obs_source_filter_remove(source,shader);obs_source_release(shader);run(.07);WAIT(!obs_source_enabled(lfo));release_controller(source,lfo);
 
   } else {
     std::puts("Shaderfilter checks NOT RUN (use the separately configured shaderfilter test)");
@@ -196,6 +209,7 @@ int main(int argc,char **argv){
   const double duration=soak>0 ? soak:1;
   for(double elapsed=0;elapsed<duration;){double chunk=std::min(30.0,duration-elapsed);run(chunk);elapsed+=chunk;uint64_t bytes=rss();rss_min=std::min(bytes,rss_min);rss_max=std::max(bytes,rss_max);
     if(soak>0){printf("SOAK %.0f/%.0f seconds; frames=%u lagged=%u rss=%llu queue_peak=%zu\n",elapsed,duration,obs_get_total_frames()-frames,obs_get_lagged_frames()-lagged,static_cast<unsigned long long>(bytes),peak_queue);fflush(stdout);}}
+  if(soak==0)WAIT(updates.load()>before);
   const double active_cpu=cpu()-active_cpu_start;
   const uint64_t active_render_ns=obs_get_average_frame_time_ns();
   int written=updates-before;uint32_t frame_n=obs_get_total_frames()-frames,lag_n=obs_get_lagged_frames()-lagged;

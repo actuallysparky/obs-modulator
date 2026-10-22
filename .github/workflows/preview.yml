@@ -8,6 +8,9 @@ on:
       soak_seconds:
         description: "Optional graphics soak duration (0 = focused suite)"
         default: "0"
+concurrency:
+  group: preview-${{ github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
