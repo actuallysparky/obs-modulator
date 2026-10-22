@@ -28,8 +28,12 @@ jobs:
         timeout-minutes: 10
         run: |
           python3 ci/download.py obs-linux /tmp/obs.deb
+          # The image's Azure mirror can throttle large codec dependencies.
+          if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
+            sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list.d/ubuntu.sources
+          fi
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update
-          sudo env DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y /tmp/obs.deb libsimde-dev ninja-build xvfb libgl1-mesa-dri mesa-utils
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y --no-install-recommends /tmp/obs.deb libsimde-dev ninja-build xvfb libgl1-mesa-dri mesa-utils
           sudo ldconfig
       - name: Prepare Shaderfilter fixture
         run: |

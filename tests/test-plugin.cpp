@@ -191,8 +191,13 @@ int main(int argc,char **argv){
   CHECK(obs_open_module(&shader_module,argv[6],argv[7])==MODULE_SUCCESS);
   CHECK(obs_init_module(shader_module));
   d=obs_data_create();obs_data_set_bool(d,"from_file",true);obs_data_set_string(d,"shader_file_name",argv[3]);obs_data_set_double(d,"gain",.37);
+  const int before_shader_frames=delivered.load();
   auto *shader=obs_source_create("shader_filter","test shader",d,nullptr);obs_data_release(d);CHECK(shader);obs_source_filter_add(source,shader);run(.3);
   props=obs_source_properties(shader);CHECK(obs_properties_get(props,"gain"));obs_properties_destroy(props);
+  // Property metadata can exist before a software renderer has finished loading
+  // the shader. Establish the real baseline pixels/settings before automation.
+  WAIT(delivered.load()>before_shader_frames+2 && pixel.load()>0 && pixel.load()<200);
+  CHECK(value(shader)==.37);
   lfo=controller(source,"gain",obs_source_get_uuid(shader));obs_source_set_enabled(lfo,true);run(.15);
   CHECK(obs_source_enabled(lfo));
   const bool shader_changed=wait_for([&](){return value(shader)!=.37;});
