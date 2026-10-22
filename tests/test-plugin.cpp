@@ -194,7 +194,11 @@ int main(int argc,char **argv){
   auto *shader=obs_source_create("shader_filter","test shader",d,nullptr);obs_data_release(d);CHECK(shader);obs_source_filter_add(source,shader);run(.3);
   props=obs_source_properties(shader);CHECK(obs_properties_get(props,"gain"));obs_properties_destroy(props);
   lfo=controller(source,"gain",obs_source_get_uuid(shader));obs_source_set_enabled(lfo,true);run(.15);
-  CHECK(obs_source_enabled(lfo));WAIT(value(shader)!=.37);CHECK(value(shader)>=0 && value(shader)<=1);
+  CHECK(obs_source_enabled(lfo));
+  const bool shader_changed=wait_for([&](){return value(shader)!=.37;});
+  std::fprintf(stderr,"Shaderfilter activation: enabled=%d showing=%d gain=%.17g frames=%d status=%s\n",
+    obs_source_enabled(lfo),obs_source_showing(source),value(shader),delivered.load(),status(lfo).c_str());
+  CHECK(shader_changed);CHECK(value(shader)>=0 && value(shader)<=1);
   WAIT(delivered.load()>0);CHECK(rendered.load()>0);WAIT(pixel.load()<200);
   change(shader,"other",.2);run(.05);CHECK(obs_source_enabled(lfo));
   change(shader,"gain",.99);run(.07);WAIT(!obs_source_enabled(lfo));CHECK(value(shader)==.99);
