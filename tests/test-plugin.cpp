@@ -213,7 +213,10 @@ int main(int argc,char **argv){
   change(shader,"gain",.99);run(.07);WAIT(!obs_source_enabled(lfo));CHECK(value(shader)==.99);
   obs_source_set_enabled(lfo,true);run(.06);props=obs_source_properties(shader);
   auto *reload=obs_properties_get(props,"reload_effect");CHECK(reload);obs_property_button_clicked(reload,shader);obs_properties_destroy(props);
-  run(.2);CHECK(obs_source_enabled(lfo));
+  run(.2);
+  std::fprintf(stderr,"Shaderfilter reload: enabled=%d gain=%.17g status=%s\n",
+    obs_source_enabled(lfo),value(shader),status(lfo).c_str());
+  CHECK(obs_source_enabled(lfo));
   obs_source_filter_remove(source,shader);obs_source_release(shader);run(.07);WAIT(!obs_source_enabled(lfo));release_controller(source,lfo);
 
   } else {

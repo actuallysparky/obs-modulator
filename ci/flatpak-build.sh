@@ -21,7 +21,7 @@ assert extension['directory'] == 'plugins' and extension.getboolean('subdirector
 assert 'lib/obs-plugins' in extension['merge-dirs']
 PY
 flatpak-builder --user --arch=x86_64 --repo=flatpak-repo build-flatpak "$manifest"
-flatpak-builder --run --user build-flatpak "$manifest" sh -c 'ldd /app/plugins/Modulator/lib/obs-plugins/obs-modulator.so' > dist/flatpak-dependencies.txt
+flatpak-builder --run build-flatpak "$manifest" sh -c 'ldd /app/plugins/Modulator/lib/obs-plugins/obs-modulator.so' > dist/flatpak-dependencies.txt
 if grep -q 'not found' dist/flatpak-dependencies.txt; then exit 1; fi
 flatpak build-bundle --runtime --arch=x86_64 flatpak-repo dist/obs-modulator-0.1.1-preview-flatpak-x86_64.flatpak "$plugin_id" stable
 flatpak install --user --noninteractive --assumeyes --bundle dist/obs-modulator-0.1.1-preview-flatpak-x86_64.flatpak
