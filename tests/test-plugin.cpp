@@ -198,13 +198,15 @@ int main(int argc,char **argv){
   // the shader. Establish the real baseline pixels/settings before automation.
   WAIT(delivered.load()>before_shader_frames+2 && pixel.load()>0 && pixel.load()<200);
   CHECK(value(shader)==.37);
+  const int baseline_pixel=pixel.load(), before_modulation_frames=delivered.load();
   lfo=controller(source,"gain",obs_source_get_uuid(shader));obs_source_set_enabled(lfo,true);run(.15);
   CHECK(obs_source_enabled(lfo));
   const bool shader_changed=wait_for([&](){return value(shader)!=.37;});
   std::fprintf(stderr,"Shaderfilter activation: enabled=%d showing=%d gain=%.17g frames=%d status=%s\n",
     obs_source_enabled(lfo),obs_source_showing(source),value(shader),delivered.load(),status(lfo).c_str());
   CHECK(shader_changed);CHECK(value(shader)>=0 && value(shader)<=1);
-  WAIT(delivered.load()>0);CHECK(rendered.load()>0);WAIT(pixel.load()<200);
+  WAIT(delivered.load()>0);CHECK(rendered.load()>0);
+  WAIT(delivered.load()>before_modulation_frames && std::abs(pixel.load()-baseline_pixel)>=10 && pixel.load()<200);
   change(shader,"other",.2);run(.05);CHECK(obs_source_enabled(lfo));
   change(shader,"gain",.99);run(.07);WAIT(!obs_source_enabled(lfo));CHECK(value(shader)==.99);
   obs_source_set_enabled(lfo,true);run(.06);props=obs_source_properties(shader);
