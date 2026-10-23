@@ -269,6 +269,14 @@ int main(int argc,char **argv){
   obs_data_set_double(d,"period",.3);obs_data_set_double(d,"minimum",.2);obs_data_set_double(d,"maximum",.4);
   obs_source_update(lfo,d);obs_data_release(d);obs_source_set_enabled(lfo,true);next_controller_pump();CHECK(value(shader)==.81);
   const int glider_frames=delivered.load();run(.4);
+  // The engine advances on video ticks. Shader recompilation/software rendering
+  // can stall those ticks beyond a wall-clock sleep; observe fresh frames before
+  // asserting takeover, while retaining the original value/enabled assertions.
+  std::fprintf(stderr,"Glider before frame sync: gain=%.17g frames=%d start_frames=%d status=%s\n",
+    value(shader),delivered.load(),glider_frames,status(lfo).c_str());
+  next_frames();
+  std::fprintf(stderr,"Glider after frame sync: gain=%.17g frames=%d status=%s\n",
+    value(shader),delivered.load(),status(lfo).c_str());
   CHECK(obs_source_enabled(lfo));CHECK(value(shader)>=.2 && value(shader)<=.4);
   WAIT(delivered.load()>glider_frames && pixel.load()<200);
   change(shader,"gain",.99);run(.07);WAIT(!obs_source_enabled(lfo));CHECK(value(shader)==.99);
