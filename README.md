@@ -4,7 +4,9 @@ I made this to bring risk and excitement to your streams in the form of LFO cont
 
 ## Preview builds
 
-Version 0.1.1 preview targets OBS 32.2.2. The Mac bundle contains Apple Silicon and Intel slices. The Linux archive targets native Ubuntu/Kubuntu 24.04 x86-64 OBS; it is not a Flatpak package. Check the accompanying candidate report for the architectures and runtime tests actually completed. A separate x86-64 Flatpak extension recipe is included below. Windows builds remain a separate work item.
+Development candidate **0.1.2** adds Ease In and Glider. The published [Preview Alpha 0.1.1](https://github.com/actuallysparky/obs-modulator/releases/tag/v0.1.1-alpha.1) predates these additions; use a 0.1.2 candidate to try them.
+
+These preview builds target OBS 32.2.2. The Mac bundle contains Apple Silicon and Intel slices. The Linux archive targets native Ubuntu/Kubuntu 24.04 x86-64 OBS; it is not a Flatpak package. Check the accompanying candidate report for the architectures and runtime tests actually completed. A separate x86-64 Flatpak extension recipe is included below. Windows builds remain a separate work item.
 
 ## Install or update
 
@@ -13,15 +15,19 @@ Quit OBS while streaming, recording and virtual camera are inactive. Keep a copy
 - Mac: place `obs-modulator.plugin` in `~/Library/Application Support/obs-studio/plugins/`. This preview uses an ad-hoc signature, not Developer ID notarization. If macOS blocks it, report the message; signed/notarized distribution remains a release task.
 - Native Linux: place the complete `obs-modulator` directory in `~/.config/obs-studio/plugins/`, or the equivalent OBS configuration directory when `XDG_CONFIG_HOME` is customized. The layout must be `plugins/obs-modulator/bin/64bit/obs-modulator.so` plus `plugins/obs-modulator/data/locale/`.
 
-Reopen OBS. Verify the current log contains `[obs-modulator] Loaded 0.1.1 (LFO only)` and the source's Add Effect Filter menu contains **LFO Modulator**. Start in an expendable test collection. For Flatpak OBS, use the extension build below instead of the native Linux archive.
+Reopen OBS. Verify the current log contains `[obs-modulator] Loaded 0.1.2 (LFO only)` and the source's Add Effect Filter menu contains **LFO Modulator**. Start in an expendable test collection. For Flatpak OBS, use the extension build below instead of the native Linux archive.
 
 ## Try it
 
 1. Add **LFO Modulator** to a video source. New mappings start with their gaze averted.
 2. Choose the target source, optional target filter, and a numeric property. This initializes both range endpoints to the property's current value.
-3. Set different minimum/maximum values, choose Sine, Triangle, Rising saw, Falling saw or Square, and set a full-cycle time (four seconds by default).
+3. Set different minimum/maximum values, choose Sine, Triangle, Rising saw, Falling saw, Square or Glider, and set a full-cycle time (four seconds by default).
 4. Enable the eye, feel it pierce your soul. Modulation runs while the parent source is showing, including previews. Disabling or hiding holds the current value; reactivation starts a fresh cycle.
 5. Move the target manually. The LFO should stop, preserve your value, turn its eye off and explain why. Re-enable to restart; **Restore starting value and disable** returns to the value captured on activation.
+
+**Ease in** (0.1.2) gently blends from the target's real current value into the moving LFO over one cycle time. It starts unchecked, preserving immediate modulation in existing scenes. Enable it before turning the eye on to let a static effect gradually come to life. Re-enabling, returning from hidden or pressing Restart cycle fades from the current value again. Restore starting value still uses the value captured when activation began.
+
+**Glider** (0.1.2) smoothly travels between random destinations inside the min/max range, easing into and out of each destination. Cycle time is the travel time between destinations, not a repeating loop. Each filter has its own sequence; restarting retraces it. Try longer times for slow organic movement. Integer targets still move in whole steps. During Ease In, a starting value outside the LFO range travels gradually into it rather than snapping to a range endpoint.
 
 Duplicate the LFO filter for more controls. One active LFO owns each target/property. Transforms, mixer volume and application settings are outside this version.
 

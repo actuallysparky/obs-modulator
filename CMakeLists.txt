@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Sparky and OBS Modulator contributors
 # SPDX-License-Identifier: GPL-2.0-or-later
 cmake_minimum_required(VERSION 3.24)
-project(obs-modulator VERSION 0.1.1 LANGUAGES CXX)
+project(obs-modulator VERSION 0.1.2 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 option(BUILD_OBS_PLUGIN "Build the native OBS plugin" ON)

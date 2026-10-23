@@ -97,9 +97,10 @@ struct Config {
   std::string source, filter, key;
   int type = 0, wave = 0;
   double low = 0, high = 0, period = 4;
+  bool ease_in = false;
   bool operator==(const Config &b) const {
     return source==b.source && filter==b.filter && key==b.key && type==b.type &&
-      wave==b.wave && low==b.low && high==b.high && period==b.period;
+      wave==b.wave && low==b.low && high==b.high && period==b.period && ease_in==b.ease_in;
   }
 };
 Config config(obs_data_t *d)
@@ -107,7 +108,7 @@ Config config(obs_data_t *d)
   return {obs_data_get_string(d,"source_uuid"), obs_data_get_string(d,"filter_uuid"),
     obs_data_get_string(d,"property"), static_cast<int>(obs_data_get_int(d,"property_type")),
     static_cast<int>(obs_data_get_int(d,"waveform")), obs_data_get_double(d,"minimum"),
-    obs_data_get_double(d,"maximum"), obs_data_get_double(d,"period")};
+    obs_data_get_double(d,"maximum"), obs_data_get_double(d,"period"), obs_data_get_bool(d,"ease_in")};
 }
 struct Controller {
   obs_weak_source_t *self;
@@ -118,13 +119,18 @@ struct Controller {
   Config last;
   std::unique_ptr<Watch> watch;
   bool active = false, snapshot_valid = false;
-  double started = 0, checked = 0, snapshot = 0;
+  double started = 0, checked = 0, snapshot = 0, ease_start = 0;
+  uint64_t glider_seed = UINT64_C(14695981039346656037);
   std::string snapshot_uuid, snapshot_key, status = "Disabled — choose a target, then enable the eye";
   std::string identity, ui_source, ui_filter, ui_key;
   bool snapshot_integer = false;
   static void enabled(void *p, calldata_t *) { static_cast<Controller *>(p)->gate_changed=true; }
   explicit Controller(obs_source_t *s) : self(obs_source_get_weak_source(s)), identity(obs_source_get_uuid(s))
-  { signal_handler_connect(obs_source_get_signal_handler(s),"enable",enabled,this); }
+  {
+    // The saved filter UUID gives each mapping independent, reproducible motion.
+    for (unsigned char ch : identity) { glider_seed ^= ch; glider_seed *= UINT64_C(1099511628211); }
+    signal_handler_connect(obs_source_get_signal_handler(s),"enable",enabled,this);
+  }
   ~Controller() {
     auto s=own(obs_weak_source_get_source(self));
     if(s)signal_handler_disconnect(obs_source_get_signal_handler(s.get()),"enable",enabled,this);
@@ -235,7 +241,7 @@ void pump(void *)
     }
     if (cfg.key.empty()) { disable(c,self.get(),"Disabled — choose a numeric target"); continue; }
     if (!std::isfinite(cfg.low) || !std::isfinite(cfg.high) || cfg.low>cfg.high ||
-        !std::isfinite(cfg.period) || cfg.period<0.05 || cfg.period>86400 || cfg.wave<0 || cfg.wave>4) {
+        !std::isfinite(cfg.period) || cfg.period<0.05 || cfg.period>86400 || cfg.wave<0 || cfg.wave>5) {
       disable(c,self.get(),"Disabled — invalid range, waveform, or cycle time"); continue;
     }
     auto target = resolve(self.get(),cfg);
@@ -262,12 +268,16 @@ void pump(void *)
     }
     if (!c.active) {
       c.active=true; c.started=now; c.snapshot=read_value(target.get(),w.number);
+      c.ease_start=c.snapshot;
       c.snapshot_uuid=uuid; c.snapshot_key=cfg.key; c.snapshot_integer=w.number.integer;
       c.snapshot_valid=std::isfinite(c.snapshot);
     }
-    if (c.restart.exchange(false)) c.started=now;
+    if (c.restart.exchange(false)) {
+      c.started=now; c.ease_start=read_value(target.get(),w.number);
+    }
     const double value=modulator::mapped(static_cast<modulator::Wave>(cfg.wave),now-c.started,
-      cfg.period,cfg.low,cfg.high,w.number.integer,w.number.low,w.number.high);
+      cfg.period,cfg.low,cfg.high,w.number.integer,w.number.low,w.number.high,
+      c.glider_seed,cfg.ease_in,c.ease_start);
     if (!std::isfinite(value)) { disable(c,self.get(),"Disabled — non-finite target value"); continue; }
     const double current=read_value(target.get(),w.number);
     if (!modulator::same_value(current,value,w.number.integer)) {
@@ -388,9 +398,12 @@ obs_properties_t *get_properties(void *data)
   obs_properties_add_float(props,"minimum","Minimum",-1e12,1e12,.01);
   obs_properties_add_float(props,"maximum","Maximum",-1e12,1e12,.01);
   auto *wave=obs_properties_add_list(props,"waveform","Waveform",OBS_COMBO_TYPE_LIST,OBS_COMBO_FORMAT_INT);
-  const char *names[]={"Sine","Triangle","Rising saw","Falling saw","Square"};
-  for(int i=0;i<5;++i)obs_property_list_add_int(wave,names[i],i);
+  const char *names[]={"Sine","Triangle","Rising saw","Falling saw","Square","Glider"};
+  for(int i=0;i<6;++i)obs_property_list_add_int(wave,names[i],i);
+  obs_property_set_long_description(wave,"Glider smoothly travels between random values; cycle time is the time between random destinations.");
   obs_properties_add_float(props,"period","Cycle time (seconds)",.05,86400,.05);
+  auto *ease=obs_properties_add_bool(props,"ease_in","Ease in");
+  obs_property_set_long_description(ease,"Gently blend from the current target value into modulation over one cycle. Re-enabling or restarting fades in again.");
   obs_properties_add_button2(props,"restart","Restart cycle",restart_clicked,c);
   obs_properties_add_button2(props,"restore","Restore starting value and disable",restore_clicked,c);
   auto *s=obs_properties_add_text(props,"status","Disabled — configure the mapping, then enable the filter eye",OBS_TEXT_INFO);
@@ -410,6 +423,7 @@ void defaults(obs_data_t *d)
   obs_data_set_default_int(d,"schema_version",1);
   obs_data_set_default_string(d,"source_uuid","@parent");
   obs_data_set_default_double(d,"period",4);
+  obs_data_set_default_bool(d,"ease_in",false);
 }
 void *create(obs_data_t *d,obs_source_t *self)
 {

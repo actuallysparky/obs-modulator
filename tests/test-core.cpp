@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "lfo.hpp"
 #include <cstdio>
+#include <algorithm>
 #include <cstdlib>
 #include <limits>
 static int checks;
@@ -29,5 +30,67 @@ int main()
   CHECK(!same_value(1,1.0001,false));
   CHECK(same_value(1,1+1e-12,false));
   CHECK(!same_value(std::numeric_limits<double>::quiet_NaN(),1,false));
+  // Glider is deterministic value noise, not a repeating period or a step.
+  constexpr uint64_t seed = UINT64_C(0x123456789abcdef0);
+  bool different_seed=false, nonperiodic=false;
+  for(int i=0;i<2000;++i) {
+    const double t=i*.037;
+    const double v=normalized(Wave::Glider,t,seed);
+    CHECK(v>=0 && v<=1);
+    CHECK(v==normalized(Wave::Glider,t,seed));
+    different_seed |= v!=normalized(Wave::Glider,t,seed+1);
+    nonperiodic |= v!=normalized(Wave::Glider,t+1,seed);
+    CHECK(mapped(Wave::Glider,t,4,-3,17,false,-3,17,seed)>=-3);
+    CHECK(mapped(Wave::Glider,t,4,-3,17,false,-3,17,seed)<=17);
+  }
+  CHECK(different_seed);CHECK(nonperiodic);
+  for(int i=-5;i<100;++i) {
+    const double a=normalized(Wave::Glider,i,seed), b=normalized(Wave::Glider,i+1,seed);
+    double previous=a;
+    for(int j=1;j<=100;++j) {
+      const double v=normalized(Wave::Glider,i+j*.01,seed);
+      CHECK(v>=std::min(a,b)-1e-14 && v<=std::max(a,b)+1e-14);
+      CHECK(b>=a ? v>=previous-1e-14 : v<=previous+1e-14);previous=v;
+    }
+    constexpr double epsilon=1e-4;
+    const double left=normalized(Wave::Glider,i-epsilon,seed), right=normalized(Wave::Glider,i+epsilon,seed);
+    CHECK(std::abs(left-a)<1e-9 && std::abs(right-a)<1e-9);
+    CHECK(std::abs((a-left)/epsilon)<1e-5 && std::abs((right-a)/epsilon)<1e-5);
+    CHECK(std::abs((right-2*a+left)/(epsilon*epsilon))<.03);
+  }
+  CHECK(normalized(Wave::Glider,std::numeric_limits<double>::infinity(),seed)==0);
+  CHECK(normalized(Wave::Glider,0x1p63,seed)==0);
+  CHECK(normalized(Wave::Glider,-0x1p64,seed)==0);
+  CHECK(std::isfinite(normalized(Wave::Glider,-0x1p63,seed)));
+
+  // Long cycles stay smooth at video-frame intervals, including knot crossings.
+  for(double period : {4.0, 60.0, 86400.0}) {
+    const double step=1.0/60.0;
+    for(int knot_index=0;knot_index<20;++knot_index) {
+      for(int frame=-2;frame<=2;++frame) {
+        const double time=knot_index*period+frame*step;
+        const double a=normalized(Wave::Glider,time/period,seed);
+        const double b=normalized(Wave::Glider,(time+step)/period,seed);
+        CHECK(std::abs(b-a)<=1.876*step/period+1e-12);
+      }
+    }
+  }
+  // Fade from the real value, even outside LFO endpoints, within property limits.
+  CHECK(mapped(Wave::Sine,0,4,.2,.4,false,0,1,seed,true,.83)==.83);
+  CHECK(mapped(Wave::Sine,.0001,4,.2,.4,false,0,1,seed,true,.83)>.829999999);
+  CHECK(same_value(mapped(Wave::Square,2,4,0,1,false,0,1,seed,true,.8),.9,false));
+  CHECK(mapped(Wave::Square,1,4,0,10,true,0,10,seed,true,7)==6);
+  CHECK(mapped(Wave::Sine,0,4,0,10,false,0,10,seed,true,20)==10);
+  for(int wave=0;wave<6;++wave) {
+    for(int i=0;i<100;++i) {
+      const double time=4+i*.027;
+      const double plain=mapped(static_cast<Wave>(wave),time,4,.2,.4,false,0,1,seed);
+      CHECK(same_value(plain,mapped(static_cast<Wave>(wave),time,4,.2,.4,false,0,1,seed,true,.83),false));
+      CHECK(plain==mapped(static_cast<Wave>(wave),time,4,.2,.4,false,0,1,seed,false,.83));
+      CHECK(mapped(static_cast<Wave>(wave),time,4,0,10,true,0,10,seed,true,7)==std::round(mapped(static_cast<Wave>(wave),time,4,0,10,false,0,10,seed,true,7)));
+    }
+    CHECK(mapped(static_cast<Wave>(wave),0,4,.2,.4,false,0,1,seed,true,.83)==.83);
+  }
+  CHECK(std::isnan(mapped(Wave::Sine,1,4,0,1,false,0,1,seed,true,std::numeric_limits<double>::quiet_NaN())));
   std::printf("%d core checks passed\n",checks);
 }

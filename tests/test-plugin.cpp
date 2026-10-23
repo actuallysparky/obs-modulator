@@ -187,6 +187,52 @@ int main(int argc,char **argv){
   obs_properties_apply_settings(props,saved);CHECK(std::string(obs_data_get_string(saved,"source_uuid"))==missing);
   obs_data_release(saved);obs_properties_destroy(props);obs_source_release(remote);release_controller(source,lfo);
 
+  // Ease from a real target outside the LFO endpoints; old scenes default off.
+  change(source,"gain",.83);next_frames();lfo=controller(source);
+  props=obs_source_properties(lfo);
+  CHECK(obs_property_get_type(obs_properties_get(props,"ease_in"))==OBS_PROPERTY_BOOL);
+  auto *waves=obs_properties_get(props,"waveform");CHECK(obs_property_list_item_count(waves)==6);
+  for(int i=0;i<6;++i)CHECK(obs_property_list_item_int(waves,i)==i);
+  CHECK(std::string(obs_property_list_item_name(waves,5))=="Glider");obs_properties_destroy(props);
+  d=obs_source_get_settings(lfo);CHECK(!obs_data_get_bool(d,"ease_in"));
+  obs_data_set_bool(d,"ease_in",true);obs_data_set_double(d,"period",.3);
+  obs_data_set_double(d,"minimum",.2);obs_data_set_double(d,"maximum",.4);obs_source_update(lfo,d);obs_data_release(d);
+  obs_source_set_enabled(lfo,true);next_controller_pump();CHECK(value(source)==.83);
+  run(.03);CHECK(value(source)>.4 && value(source)<=.83);CHECK(obs_source_enabled(lfo));
+  props=obs_source_properties(lfo);obs_property_button_clicked(obs_properties_get(props,"restart"),lfo);obs_properties_destroy(props);
+  held=value(source);next_controller_pump();CHECK(value(source)==held);
+  run(.35);CHECK(value(source)>=.2 && value(source)<=.4);CHECK(obs_source_enabled(lfo));
+  props=obs_source_properties(lfo);obs_property_button_clicked(obs_properties_get(props,"restore"),lfo);obs_properties_destroy(props);
+  run(.06);WAIT(!obs_source_enabled(lfo));CHECK(value(source)==.83);
+  // Eye/visibility restart recaptures the held value; outside edits still win.
+  obs_source_set_enabled(lfo,true);next_controller_pump();CHECK(value(source)==.83);
+  run(.06);obs_set_output_source(0,nullptr);obs_source_dec_showing(source);run(.06);
+  held=value(source);run(.06);CHECK(value(source)==held);
+  obs_source_inc_showing(source);obs_set_output_source(0,source);next_controller_pump();CHECK(value(source)==held);
+  change(source,"gain",.937);run(.06);WAIT(!obs_source_enabled(lfo));CHECK(value(source)==.937);
+  obs_source_set_enabled(lfo,true);next_controller_pump();CHECK(value(source)==.937);
+  obs_source_set_enabled(lfo,false);run(.04);
+  // Switching easing off immediately resumes ordinary waveform output.
+  d=obs_source_get_settings(lfo);obs_data_set_bool(d,"ease_in",false);obs_source_update(lfo,d);obs_data_release(d);
+  obs_source_set_enabled(lfo,true);next_controller_pump();CHECK(value(source)==.2);
+  release_controller(source,lfo);
+
+  // Glider gets a stable per-filter seed across saved-state reloads.
+  lfo=controller(source);d=obs_source_get_settings(lfo);obs_data_set_int(d,"waveform",5);
+  obs_source_update(lfo,d);obs_data_release(d);obs_source_set_enabled(lfo,true);next_controller_pump();
+  const double first_glider=value(source);const std::string glider_uuid=obs_source_get_uuid(lfo);
+  CHECK(first_glider>=0 && first_glider<=1);CHECK(obs_source_enabled(lfo));
+  serialized=obs_save_source(lfo);CHECK(serialized);release_controller(source,lfo);
+  lfo=obs_load_private_source(serialized);obs_data_release(serialized);CHECK(lfo);obs_source_filter_add(source,lfo);
+  CHECK(std::string(obs_source_get_uuid(lfo))==glider_uuid);next_controller_pump();CHECK(value(source)==first_glider);
+  d=obs_source_get_settings(lfo);CHECK(obs_data_get_int(d,"waveform")==5);CHECK(!obs_data_get_bool(d,"ease_in"));
+  obs_data_set_bool(d,"ease_in",true);obs_source_update(lfo,d);obs_data_release(d);
+  next_controller_pump();CHECK(value(source)==first_glider);
+  serialized=obs_save_source(lfo);release_controller(source,lfo);lfo=obs_load_private_source(serialized);obs_data_release(serialized);CHECK(lfo);
+  obs_source_filter_add(source,lfo);next_controller_pump();d=obs_source_get_settings(lfo);
+  CHECK(obs_data_get_bool(d,"ease_in"));CHECK(obs_data_get_int(d,"waveform")==5);obs_data_release(d);CHECK(value(source)==first_glider);
+  change(lfo,"waveform",6);run(.05);WAIT(!obs_source_enabled(lfo));release_controller(source,lfo);
+
   // Real Shaderfilter is loaded explicitly, never the user's scene collection.
   if(argc>=8 && argv[6][0]) {
   obs_module_t *shader_module=nullptr;
@@ -217,6 +263,18 @@ int main(int argc,char **argv){
   std::fprintf(stderr,"Shaderfilter reload: enabled=%d gain=%.17g status=%s\n",
     obs_source_enabled(lfo),value(shader),status(lfo).c_str());
   CHECK(obs_source_enabled(lfo));
+  // Exercise both additions against real Shaderfilter settings/rendered frames.
+  obs_source_set_enabled(lfo,false);run(.05);change(shader,"gain",.81);next_frames();WAIT(pixel.load()>200);
+  d=obs_source_get_settings(lfo);obs_data_set_int(d,"waveform",5);obs_data_set_bool(d,"ease_in",true);
+  obs_data_set_double(d,"period",.3);obs_data_set_double(d,"minimum",.2);obs_data_set_double(d,"maximum",.4);
+  obs_source_update(lfo,d);obs_data_release(d);obs_source_set_enabled(lfo,true);next_controller_pump();CHECK(value(shader)==.81);
+  const int glider_frames=delivered.load();run(.4);
+  CHECK(obs_source_enabled(lfo));CHECK(value(shader)>=.2 && value(shader)<=.4);
+  WAIT(delivered.load()>glider_frames && pixel.load()<200);
+  change(shader,"gain",.99);run(.07);WAIT(!obs_source_enabled(lfo));CHECK(value(shader)==.99);
+  props=obs_source_properties(lfo);obs_property_button_clicked(obs_properties_get(props,"restore"),lfo);obs_properties_destroy(props);
+  run(.07);CHECK(!obs_source_enabled(lfo));CHECK(value(shader)==.81);
+  obs_source_set_enabled(lfo,true);next_controller_pump();CHECK(value(shader)==.81);
   obs_source_filter_remove(source,shader);obs_source_release(shader);run(.07);WAIT(!obs_source_enabled(lfo));release_controller(source,lfo);
 
   } else {
