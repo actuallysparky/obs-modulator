@@ -92,5 +92,25 @@ int main()
     CHECK(mapped(static_cast<Wave>(wave),0,4,.2,.4,false,0,1,seed,true,.83)==.83);
   }
   CHECK(std::isnan(mapped(Wave::Sine,1,4,0,1,false,0,1,seed,true,std::numeric_limits<double>::quiet_NaN())));
+  // A stop returns continuously from the last output to the activation snapshot.
+  CHECK(eased_return(0,4,.3,.83,false,0,1)==.3);
+  CHECK(eased_return(4,4,.3,.83,false,0,1)==.83);
+  CHECK(eased_return(40,4,.3,.83,false,0,1)==.83);
+  CHECK(same_value(eased_return(2,4,.3,.83,false,0,1),.565,false));
+  CHECK(eased_return(1,4,7,0,true,0,10)==6);
+  CHECK(eased_return(4,4,0,20,false,0,10)==10);
+  CHECK(eased_return(4,4,10,-20,true,0,10)==0);
+  for(int i=0;i<1000;++i) {
+    const double t=i*.004, a=eased_return(t,4,.3,.83,false,0,1);
+    const double b=eased_return(t+.004,4,.3,.83,false,0,1);
+    CHECK(a>=.3 && a<=.83);CHECK(b>=a);
+    CHECK(same_value(eased_return(t,4,.83,.3,false,0,1),1.13-a,false));
+    CHECK(eased_return(t,4,3,8,true,0,10)==std::round(eased_return(t,4,3,8,false,0,10)));
+  }
+  CHECK(eased_return(.0001,4,.3,.83,false,0,1)<.300000001);
+  CHECK(eased_return(3.9999,4,.3,.83,false,0,1)>.829999999);
+  CHECK(std::isnan(eased_return(0,0,0,1,false,0,1)));
+  CHECK(std::isnan(eased_return(0,4,0,1,false,2,1)));
+  CHECK(std::isnan(eased_return(0,4,0,std::numeric_limits<double>::infinity(),false,0,1)));
   std::printf("%d core checks passed\n",checks);
 }

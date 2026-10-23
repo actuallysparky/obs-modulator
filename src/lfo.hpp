@@ -11,5 +11,7 @@ double normalized(Wave wave, double cycles, uint64_t seed = 0);
 double mapped(Wave wave, double elapsed, double period, double low, double high,
               bool integer, double property_min, double property_max,
               uint64_t seed = 0, bool ease_in = false, double starting_value = 0);
+double eased_return(double elapsed, double period, double from, double to,
+                    bool integer, double property_min, double property_max);
 bool same_value(double a, double b, bool integer);
 }

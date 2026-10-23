@@ -204,10 +204,11 @@ int main(int argc,char **argv){
   run(.35);CHECK(value(source)>=.2 && value(source)<=.4);CHECK(obs_source_enabled(lfo));
   props=obs_source_properties(lfo);obs_property_button_clicked(obs_properties_get(props,"restore"),lfo);obs_properties_destroy(props);
   run(.06);WAIT(!obs_source_enabled(lfo));CHECK(value(source)==.83);
-  // Eye/visibility restart recaptures the held value; outside edits still win.
+  // Hiding starts a return; showing again interrupts it without a jump.
   obs_source_set_enabled(lfo,true);next_controller_pump();CHECK(value(source)==.83);
-  run(.06);obs_set_output_source(0,nullptr);obs_source_dec_showing(source);run(.06);
-  held=value(source);run(.06);CHECK(value(source)==held);
+  run(.06);obs_set_output_source(0,nullptr);obs_source_dec_showing(source);
+  held=value(source);next_controller_pump();CHECK(value(source)==held);
+  CHECK(status(lfo).find("Easing out")==0);
   obs_source_inc_showing(source);obs_set_output_source(0,source);next_controller_pump();CHECK(value(source)==held);
   change(source,"gain",.937);run(.06);WAIT(!obs_source_enabled(lfo));CHECK(value(source)==.937);
   obs_source_set_enabled(lfo,true);next_controller_pump();CHECK(value(source)==.937);
@@ -216,6 +217,81 @@ int main(int argc,char **argv){
   d=obs_source_get_settings(lfo);obs_data_set_bool(d,"ease_in",false);obs_source_update(lfo,d);obs_data_release(d);
   obs_source_set_enabled(lfo,true);next_controller_pump();CHECK(value(source)==.2);
   release_controller(source,lfo);
+
+  // Checked: eye off returns to the activation value, holding ownership meanwhile.
+  change(source,"gain",.83);next_frames();lfo=controller(source);
+  d=obs_source_get_settings(lfo);obs_data_set_bool(d,"ease_in",true);obs_data_set_double(d,"period",.3);
+  obs_data_set_double(d,"minimum",.2);obs_data_set_double(d,"maximum",.4);obs_source_update(lfo,d);obs_data_release(d);
+  obs_source_set_enabled(lfo,true);next_controller_pump();CHECK(value(source)==.83);
+  run(.35);next_frames();CHECK(value(source)>=.2 && value(source)<=.4);
+  held=value(source);obs_source_set_enabled(lfo,false);next_controller_pump();CHECK(value(source)==held);
+  CHECK(!obs_source_enabled(lfo));CHECK(status(lfo).find("Easing out")==0);
+  conflict=controller(source);obs_source_set_enabled(conflict,true);next_controller_pump();CHECK(!obs_source_enabled(conflict));
+  CHECK(status(conflict).find("another LFO")!=std::string::npos);release_controller(source,conflict);
+  WAIT(value(source)==.83);WAIT(status(lfo).find("Disabled — eased")==0);
+  held=value(source);run(.06);next_frames();CHECK(value(source)==held);
+  // Once the tail completes another mapping can acquire the property.
+  conflict=controller(source);obs_source_set_enabled(conflict,true);next_controller_pump();CHECK(obs_source_enabled(conflict));
+  release_controller(source,conflict);
+  // Reactivation in a return starts a new fade from its current value.
+  change(source,"gain",.81);next_frames();obs_source_set_enabled(lfo,true);next_controller_pump();CHECK(value(source)==.81);
+  run(.35);next_frames();obs_source_set_enabled(lfo,false);next_controller_pump();
+  held=value(source);obs_source_set_enabled(lfo,true);next_controller_pump();CHECK(value(source)==held);
+  run(.35);next_frames();obs_source_set_enabled(lfo,false);next_controller_pump();
+  WAIT(value(source)==held);WAIT(status(lfo).find("Disabled — eased")==0);
+  // Manual edits during the tail cancel it immediately, including unrelated updates.
+  change(source,"gain",.83);next_frames();obs_source_set_enabled(lfo,true);run(.35);next_frames();
+  obs_source_set_enabled(lfo,false);next_controller_pump();change(source,"other",.71);next_controller_pump();
+  CHECK(status(lfo).find("Easing out")==0);
+  change(source,"gain",.937);next_controller_pump();CHECK(value(source)==.937);CHECK(status(lfo).find("Paused")==0);
+  run(.4);next_frames();CHECK(value(source)==.937);
+  // Restore bypasses the tail; changing config while off cancels queued returns.
+  obs_source_set_enabled(lfo,true);run(.35);next_frames();obs_source_set_enabled(lfo,false);next_controller_pump();
+  props=obs_source_properties(lfo);obs_property_button_clicked(obs_properties_get(props,"restore"),lfo);obs_properties_destroy(props);
+  next_controller_pump();CHECK(value(source)==.937);run(.35);CHECK(value(source)==.937);
+  obs_source_set_enabled(lfo,true);run(.35);next_frames();obs_source_set_enabled(lfo,false);next_controller_pump();
+  d=obs_source_get_settings(lfo);obs_data_set_bool(d,"ease_in",false);obs_source_update(lfo,d);obs_data_release(d);
+  next_controller_pump();held=value(source);run(.4);next_frames();CHECK(value(source)==held);
+  // Unchecked: no delayed return, and next activation is immediate.
+  obs_source_set_enabled(lfo,true);next_controller_pump();CHECK(value(source)==.2);
+  run(.06);obs_source_set_enabled(lfo,false);held=value(source);next_controller_pump();CHECK(value(source)==held);
+  run(.4);next_frames();CHECK(value(source)==held);release_controller(source,lfo);
+
+  // Hidden sources finish their return too; returning early restarts smoothly above.
+  change(source,"gain",.83);next_frames();lfo=controller(source);
+  d=obs_source_get_settings(lfo);obs_data_set_bool(d,"ease_in",true);obs_data_set_double(d,"period",.2);
+  obs_source_update(lfo,d);obs_data_release(d);obs_source_set_enabled(lfo,true);run(.25);next_frames();
+  obs_set_output_source(0,nullptr);obs_source_dec_showing(source);next_controller_pump();
+  CHECK(status(lfo).find("Easing out")==0);WAIT(value(source)==.83);
+  WAIT(status(lfo).find("Waiting")==0);obs_source_inc_showing(source);obs_set_output_source(0,source);
+  next_controller_pump();CHECK(value(source)==.83);
+  // Invalidated metadata cancels a return instead of continuing stale writes.
+  run(.25);next_frames();obs_source_set_enabled(lfo,false);next_controller_pump();
+  hide_gain=true;obs_source_update_properties(source);next_controller_pump();
+  CHECK(status(lfo).find("property missing")!=std::string::npos);held=value(source);run(.3);CHECK(value(source)==held);
+  hide_gain=false;release_controller(source,lfo);
+
+  // Integer tails round after interpolation and land exactly at their snapshot.
+  integer_mode=true;change(source,"gain",7);next_frames();lfo=controller(source);
+  d=obs_source_get_settings(lfo);obs_data_set_bool(d,"ease_in",true);obs_data_set_double(d,"period",.2);
+  obs_data_set_int(d,"property_type",1);obs_data_set_double(d,"maximum",2);obs_source_update(lfo,d);obs_data_release(d);
+  obs_source_set_enabled(lfo,true);run(.25);next_frames();CHECK(value(source)<=2);
+  obs_source_set_enabled(lfo,false);next_controller_pump();held=value(source);CHECK(held==std::round(held));
+  WAIT(value(source)==7);WAIT(status(lfo).find("Disabled — eased")==0);release_controller(source,lfo);integer_mode=false;
+
+  // Target deletion and controller destruction cancel tails with queued tasks.
+  remote=obs_source_create("modulator_test_source","return target",nullptr,nullptr);CHECK(remote);
+  change(remote,"gain",.83);next_frames();lfo=controller(source);
+  d=obs_source_get_settings(lfo);obs_data_set_string(d,"source_uuid",obs_source_get_uuid(remote));
+  obs_data_set_bool(d,"ease_in",true);obs_data_set_double(d,"period",.2);obs_source_update(lfo,d);obs_data_release(d);
+  obs_source_set_enabled(lfo,true);run(.25);next_frames();obs_source_set_enabled(lfo,false);next_controller_pump();
+  obs_source_remove(remote);next_controller_pump();CHECK(status(lfo).find("target was removed")!=std::string::npos);
+  held=value(remote);run(.25);CHECK(value(remote)==held);obs_source_release(remote);release_controller(source,lfo);
+  change(source,"gain",.83);next_frames();lfo=controller(source);
+  d=obs_source_get_settings(lfo);obs_data_set_bool(d,"ease_in",true);obs_data_set_double(d,"period",.2);
+  obs_source_update(lfo,d);obs_data_release(d);obs_source_set_enabled(lfo,true);run(.25);next_frames();
+  obs_source_set_enabled(lfo,false);next_controller_pump();held=value(source);release_controller(source,lfo);
+  run(.25);next_frames();CHECK(value(source)==held);
 
   // Glider gets a stable per-filter seed across saved-state reloads.
   lfo=controller(source);d=obs_source_get_settings(lfo);obs_data_set_int(d,"waveform",5);
@@ -279,6 +355,12 @@ int main(int argc,char **argv){
     value(shader),delivered.load(),status(lfo).c_str());
   CHECK(obs_source_enabled(lfo));CHECK(value(shader)>=.2 && value(shader)<=.4);
   WAIT(delivered.load()>glider_frames && pixel.load()<200);
+  // Return changes actual shader pixels while the controller eye stays off.
+  held=value(shader);obs_source_set_enabled(lfo,false);next_controller_pump();CHECK(value(shader)==held);
+  CHECK(status(lfo).find("Easing out")==0);WAIT(value(shader)==.81);WAIT(pixel.load()>200);
+  WAIT(status(lfo).find("Disabled — eased")==0);CHECK(!obs_source_enabled(lfo));
+  obs_source_set_enabled(lfo,true);next_controller_pump();CHECK(value(shader)==.81);
+  run(.35);next_frames();CHECK(obs_source_enabled(lfo));CHECK(value(shader)>=.2 && value(shader)<=.4);
   change(shader,"gain",.99);run(.07);WAIT(!obs_source_enabled(lfo));CHECK(value(shader)==.99);
   props=obs_source_properties(lfo);obs_property_button_clicked(obs_properties_get(props,"restore"),lfo);obs_properties_destroy(props);
   // Manual takeover already disabled the eye; waiting on that flag would not

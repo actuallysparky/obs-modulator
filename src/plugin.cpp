@@ -118,8 +118,9 @@ struct Controller {
   std::atomic<bool> initialized{false};
   Config last;
   std::unique_ptr<Watch> watch;
-  bool active = false, snapshot_valid = false;
+  bool active = false, releasing = false, snapshot_valid = false;
   double started = 0, checked = 0, snapshot = 0, ease_start = 0;
+  double release_started = 0, release_from = 0;
   uint64_t glider_seed = UINT64_C(14695981039346656037);
   std::string snapshot_uuid, snapshot_key, status = "Disabled — choose a target, then enable the eye";
   std::string identity, ui_source, ui_filter, ui_key;
@@ -174,7 +175,7 @@ void status(Controller &c, obs_source_t *self, const std::string &message)
 }
 void disable(Controller &c, obs_source_t *self, const char *why)
 {
-  c.active = false; c.watch.reset();
+  c.active = false; c.releasing = false; c.watch.reset();
   obs_source_set_enabled(self, false);
   status(c, self, why);
 }
@@ -215,7 +216,7 @@ void pump(void *)
     if (c.dead) continue;
     auto self = own(obs_weak_source_get_source(c.self));
     if (!self || obs_source_removed(self.get())) continue;
-    if(c.gate_changed.exchange(false)){c.active=false;c.watch.reset();}
+    const bool gate_changed=c.gate_changed.exchange(false);
     auto d = settings(self.get()); const Config cfg = config(d.get());
     if (c.restore.exchange(false)) {
       disable(c,self.get(),"Disabled — restored starting value");
@@ -228,16 +229,19 @@ void pump(void *)
       } else status(c,self.get(),"Disabled — starting value unavailable for this target");
       continue;
     }
-    if (!(cfg == c.last)) { c.active=false; c.watch.reset(); c.last=cfg; }
+    if (!(cfg == c.last)) { c.active=false; c.releasing=false; c.watch.reset(); c.last=cfg; }
     auto *parent = obs_filter_get_parent(self.get());
-    if (!obs_source_enabled(self.get())) {
-      c.active=false; c.watch.reset(); c.restart=false;
-      if (c.status.rfind("Running",0)==0 || c.status.rfind("Waiting",0)==0)
+    const bool enabled=obs_source_enabled(self.get());
+    const bool requested=enabled && parent && obs_source_showing(parent);
+    // An intentional stop retains ownership/watch during its return. Re-enabling
+    // cancels that tail and captures the current value as a fresh activation.
+    if (gate_changed && enabled) { c.active=false; c.releasing=false; c.watch.reset(); }
+    if (!requested && (!parent || !c.active || !cfg.ease_in || !c.snapshot_valid)) {
+      c.active=false; c.releasing=false; c.watch.reset(); c.restart=false;
+      if (enabled) status(c,self.get(),"Waiting — parent source is hidden");
+      else if (c.status.rfind("Running",0)==0 || c.status.rfind("Waiting",0)==0 || c.status.rfind("Easing",0)==0)
         status(c,self.get(),"Disabled — holding the last value");
       continue;
-    }
-    if (!parent || !obs_source_showing(parent)) {
-      c.active=false; c.watch.reset(); status(c,self.get(),"Waiting — parent source is hidden"); continue;
     }
     if (cfg.key.empty()) { disable(c,self.get(),"Disabled — choose a numeric target"); continue; }
     if (!std::isfinite(cfg.low) || !std::isfinite(cfg.high) || cfg.low>cfg.high ||
@@ -247,6 +251,9 @@ void pump(void *)
     auto target = resolve(self.get(),cfg);
     if (!target) { disable(c,self.get(),"Disabled — target was removed; select it again"); continue; }
     const std::string uuid = obs_source_get_uuid(target.get());
+    if (c.active && c.snapshot_uuid!=uuid) {
+      disable(c,self.get(),"Disabled — target identity changed; enable the eye to restart"); continue;
+    }
     const std::string ownership = uuid + "/" + cfg.key;
     if (owners.count(ownership)) { disable(c,self.get(),"Disabled — another LFO owns this property"); continue; }
     owners[ownership]=&c;
@@ -266,27 +273,44 @@ void pump(void *)
     if (w.external || (w.wrote && !modulator::same_value(read_value(target.get(),w.number),w.expected,w.number.integer))) {
       disable(c,self.get(),"Paused — target changed externally; enable the eye to restart"); continue;
     }
+    if (requested && c.releasing) { c.active=false; c.releasing=false; }
     if (!c.active) {
       c.active=true; c.started=now; c.snapshot=read_value(target.get(),w.number);
       c.ease_start=c.snapshot;
       c.snapshot_uuid=uuid; c.snapshot_key=cfg.key; c.snapshot_integer=w.number.integer;
       c.snapshot_valid=std::isfinite(c.snapshot);
     }
-    if (c.restart.exchange(false)) {
+    if (requested && c.restart.exchange(false)) {
       c.started=now; c.ease_start=read_value(target.get(),w.number);
     }
-    const double value=modulator::mapped(static_cast<modulator::Wave>(cfg.wave),now-c.started,
+    const double current=read_value(target.get(),w.number);
+    double value;
+    if (!requested) {
+      c.restart=false;
+      if (!c.releasing) { c.releasing=true; c.release_started=now; c.release_from=current; }
+      value=modulator::eased_return(now-c.release_started,cfg.period,c.release_from,c.snapshot,
+        w.number.integer,w.number.low,w.number.high);
+      if (now-c.release_started>=cfg.period && current==value) {
+        c.active=false; c.releasing=false; c.watch.reset();
+        status(c,self.get(),enabled ? "Waiting — eased back to starting value; parent is hidden"
+                                   : "Disabled — eased back to starting value");
+        continue;
+      }
+    } else value=modulator::mapped(static_cast<modulator::Wave>(cfg.wave),now-c.started,
       cfg.period,cfg.low,cfg.high,w.number.integer,w.number.low,w.number.high,
       c.glider_seed,cfg.ease_in,c.ease_start);
     if (!std::isfinite(value)) { disable(c,self.get(),"Disabled — non-finite target value"); continue; }
-    const double current=read_value(target.get(),w.number);
-    if (!modulator::same_value(current,value,w.number.integer)) {
+    // Land exactly on the snapshot, even if an earlier eased sample was within
+    // the usual floating-point write tolerance of the final value.
+    const bool exact_return=c.releasing && now-c.release_started>=cfg.period;
+    if ((exact_return && current!=value) || !modulator::same_value(current,value,w.number.integer)) {
       auto &batch=batches[uuid];
       if (!batch.target) batch.target=own(obs_source_get_ref(target.get()));
       batch.changes.push_back({h,w.number,current,value});
     } else { w.expected=value; w.wrote=true; }
     uint64_t interval=obs_get_frame_interval_ns();
-    status(c,self.get(),interval && cfg.period < 8.0*static_cast<double>(interval)/1e9
+    status(c,self.get(),c.releasing ? "Easing out — returning to starting value; manual edits cancel"
+      : interval && cfg.period < 8.0*static_cast<double>(interval)/1e9
       ? "Running — fewer than 8 frames per cycle; motion may alias" : "Running — manual target edits turn this eye off");
   }
   for (auto &entry : batches) {
@@ -294,9 +318,11 @@ void pump(void *)
     for (auto &change:batch.changes) {
       auto &c=*change.controller; std::lock_guard<std::recursive_mutex> lock(c.mutex);
       auto self=own(obs_weak_source_get_source(c.self));
-      if(c.dead || !self || !c.watch || c.gate_changed || !obs_source_enabled(self.get())) continue;
+      if(c.dead || !self || !c.watch || c.gate_changed) continue;
       auto *parent=obs_filter_get_parent(self.get());
-      if(!parent || !obs_source_showing(parent) || obs_source_removed(batch.target.get())) continue;
+      const bool requested=obs_source_enabled(self.get()) && parent && obs_source_showing(parent);
+      if(!parent || requested==c.releasing || obs_source_removed(batch.target.get())) continue;
+      auto d=settings(self.get());if(!(config(d.get())==c.last))continue;
       if(c.watch->external || !modulator::same_value(read_value(batch.target.get(),change.number),change.observed,change.number.integer)) {
         disable(c,self.get(),"Paused — target changed externally; enable the eye to restart");continue;
       }
@@ -402,12 +428,12 @@ obs_properties_t *get_properties(void *data)
   for(int i=0;i<6;++i)obs_property_list_add_int(wave,names[i],i);
   obs_property_set_long_description(wave,"Glider smoothly travels between random values; cycle time is the time between random destinations.");
   obs_properties_add_float(props,"period","Cycle time (seconds)",.05,86400,.05);
-  auto *ease=obs_properties_add_bool(props,"ease_in","Ease in");
-  obs_property_set_long_description(ease,"Gently blend from the current target value into modulation over one cycle. Re-enabling or restarting fades in again.");
+  obs_properties_add_bool(props,"ease_in","Ease in / out");
+  obs_properties_add_text(props,"ease_in_help","Blend into modulation over one cycle. On stop, gently return to the activation value over one cycle, even while the eye is off or the source is hidden. Unchecked: start immediately and hold the last value on stop. Manual edits cancel immediately.",OBS_TEXT_INFO);
   obs_properties_add_button2(props,"restart","Restart cycle",restart_clicked,c);
   obs_properties_add_button2(props,"restore","Restore starting value and disable",restore_clicked,c);
   auto *s=obs_properties_add_text(props,"status","Disabled — configure the mapping, then enable the filter eye",OBS_TEXT_INFO);
-  obs_properties_add_text(props,"help","Active while the eye is enabled and this source is showing (including previews). Stops hold the last value. External target edits turn the eye off. Target dialogs may not redraw continuously.",OBS_TEXT_INFO);
+  obs_properties_add_text(props,"help","Modulation runs while the eye is enabled and this source is showing (including previews). Ease in / out adds a one-cycle return on stop. External target edits turn the eye off and cancel any return. Target dialogs may not redraw continuously.",OBS_TEXT_INFO);
   obs_property_set_modified_callback2(src,target_changed,c);obs_property_set_modified_callback2(f,target_changed,c);
   obs_property_set_modified_callback2(key,property_changed,c);
   if(c) {

@@ -59,6 +59,18 @@ double mapped(Wave wave, double elapsed, double period, double low, double high,
   if (integer) value = std::round(value);
   return std::clamp(value, property_min, property_max);
 }
+double eased_return(double elapsed, double period, double from, double to,
+                    bool integer, double property_min, double property_max)
+{
+  if (!std::isfinite(elapsed) || !std::isfinite(period) || period <= 0 ||
+      !std::isfinite(from) || !std::isfinite(to) ||
+      !std::isfinite(property_min) || !std::isfinite(property_max) || property_min > property_max)
+    return std::numeric_limits<double>::quiet_NaN();
+  const double t=gentle(elapsed/period);
+  double value=elapsed>=period ? to : from+(to-from)*t;
+  if(integer)value=std::round(value);
+  return std::clamp(value,property_min,property_max);
+}
 bool same_value(double a, double b, bool integer)
 {
   if (!std::isfinite(a) || !std::isfinite(b)) return false;
