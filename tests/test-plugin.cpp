@@ -281,7 +281,9 @@ int main(int argc,char **argv){
   WAIT(delivered.load()>glider_frames && pixel.load()<200);
   change(shader,"gain",.99);run(.07);WAIT(!obs_source_enabled(lfo));CHECK(value(shader)==.99);
   props=obs_source_properties(lfo);obs_property_button_clicked(obs_properties_get(props,"restore"),lfo);obs_properties_destroy(props);
-  run(.07);CHECK(!obs_source_enabled(lfo));CHECK(value(shader)==.81);
+  // Manual takeover already disabled the eye; waiting on that flag would not
+  // prove the queued Restore button command has run. Step its controller task.
+  next_controller_pump();CHECK(!obs_source_enabled(lfo));CHECK(value(shader)==.81);
   obs_source_set_enabled(lfo,true);next_controller_pump();CHECK(value(shader)==.81);
   obs_source_filter_remove(source,shader);obs_source_release(shader);run(.07);WAIT(!obs_source_enabled(lfo));release_controller(source,lfo);
 
