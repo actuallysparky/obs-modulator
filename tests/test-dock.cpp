@@ -48,7 +48,12 @@ int main(int argc,char **argv) {
   dock->hide();main.show();run(160);CHECK(counts->samples==0 && !panel->monitoring() && panel->view()==nullptr);
   dock->show();dock->hide();run(100);CHECK(counts->samples==0 && panel->view()==nullptr);
   {QSignalBlocker block(dock);dock->show();} // OBS's actual Docks-menu implementation
-  run(220);CHECK(panel->monitoring() && counts->samples>=2);CHECK(panel->history_appends>=2);
+  run(220);
+  if(!panel->monitoring() || counts->samples<2)
+    std::fprintf(stderr,"Dock show diagnostic: active=%d panel_visible=%d dock_visible=%d main_visible=%d built=%d samples=%d ticks=%llu history=%llu\n",
+      panel->monitoring(),panel->isVisible(),dock->isVisible(),main.isVisible(),panel->view()!=nullptr,counts->samples,
+      static_cast<unsigned long long>(panel->timer_callbacks),static_cast<unsigned long long>(panel->history_appends));
+  CHECK(panel->monitoring() && counts->samples>=2);CHECK(panel->history_appends>=2);
   auto *model=panel->view()->model();CHECK(model->rowCount()==1);CHECK(model->columnCount()==3);
   CHECK(model->data(model->index(0,2),Qt::DisplayRole).toString()=="0.17");
   CHECK(model->setData(model->index(0,0),Qt::Unchecked,Qt::CheckStateRole));CHECK(counts->toggles==1 && !fixture->rows[0].enabled);
