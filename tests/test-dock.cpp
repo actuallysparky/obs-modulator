@@ -36,6 +36,11 @@ static void run(int ms) {
   QElapsedTimer time;time.start();
   while(time.elapsed()<ms){QCoreApplication::processEvents();QThread::msleep(1);}
 }
+static bool wait_for(const std::function<bool()> &ready) {
+  QElapsedTimer time;time.start();
+  while(!ready() && time.elapsed()<5000)run(10);
+  return ready();
+}
 int main(int argc,char **argv) {
   QApplication app(argc,argv);QMainWindow main;main.resize(700,500);
   auto source=std::make_unique<Fixture>();auto *fixture=source.get();auto counts=fixture->counts;
@@ -48,8 +53,10 @@ int main(int argc,char **argv) {
   dock->hide();main.show();run(160);CHECK(counts->samples==0 && !panel->monitoring() && panel->view()==nullptr);
   dock->show();dock->hide();run(100);CHECK(counts->samples==0 && panel->view()==nullptr);
   {QSignalBlocker block(dock);dock->show();} // OBS's actual Docks-menu implementation
-  run(220);
-  if(!panel->monitoring() || counts->samples<2)
+  // First-show layout/font work can consume a fixed event-loop wait on a cold
+  // runner. Require the same activation and visible-history observations.
+  const bool started=wait_for([&]{return panel->monitoring() && counts->samples>=2 && panel->history_appends>=2;});
+  if(!started)
     std::fprintf(stderr,"Dock show diagnostic: active=%d panel_visible=%d dock_visible=%d main_visible=%d built=%d samples=%d ticks=%llu history=%llu\n",
       panel->monitoring(),panel->isVisible(),dock->isVisible(),main.isVisible(),panel->view()!=nullptr,counts->samples,
       static_cast<unsigned long long>(panel->timer_callbacks),static_cast<unsigned long long>(panel->history_appends));
