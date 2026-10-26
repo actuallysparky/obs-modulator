@@ -3,6 +3,10 @@
 #include <obs-module.h>
 #include <util/platform.h>
 #include "lfo.hpp"
+#include "monitor.hpp"
+#ifdef MODULATOR_DOCK
+#include "frontend.hpp"
+#endif
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -111,6 +115,7 @@ Config config(obs_data_t *d)
     obs_data_get_double(d,"maximum"), obs_data_get_double(d,"period"), obs_data_get_bool(d,"ease_in")};
 }
 struct Controller {
+  enum class StopReason { None, ExternalEdit, Invalid };
   obs_weak_source_t *self;
   std::recursive_mutex mutex;
   std::atomic<bool> dead{false}, restart{false}, restore{false};
@@ -125,6 +130,7 @@ struct Controller {
   std::string snapshot_uuid, snapshot_key, status = "Disabled — choose a target, then enable the eye";
   std::string identity, ui_source, ui_filter, ui_key;
   bool snapshot_integer = false;
+  StopReason stop_reason = StopReason::None;
   static void enabled(void *p, calldata_t *) { static_cast<Controller *>(p)->gate_changed=true; }
   explicit Controller(obs_source_t *s) : self(obs_source_get_weak_source(s)), identity(obs_source_get_uuid(s))
   {
@@ -173,8 +179,10 @@ void status(Controller &c, obs_source_t *self, const std::string &message)
   c.status = message;
   obs_source_update_properties(self);
 }
-void disable(Controller &c, obs_source_t *self, const char *why)
+void disable(Controller &c, obs_source_t *self, const char *why,
+             Controller::StopReason reason = Controller::StopReason::Invalid)
 {
+  c.stop_reason = reason;
   c.active = false; c.releasing = false; c.watch.reset();
   obs_source_set_enabled(self, false);
   status(c, self, why);
@@ -219,14 +227,17 @@ void pump(void *)
     const bool gate_changed=c.gate_changed.exchange(false);
     auto d = settings(self.get()); const Config cfg = config(d.get());
     if (c.restore.exchange(false)) {
-      disable(c,self.get(),"Disabled — restored starting value");
+      disable(c,self.get(),"Disabled — restored starting value",Controller::StopReason::None);
       auto target = resolve(self.get(), cfg); Numeric n;
       if (c.snapshot_valid && target && c.snapshot_uuid == obs_source_get_uuid(target.get()) &&
           c.snapshot_key == cfg.key && find_numeric(target.get(),cfg.key,n) && n.integer==c.snapshot_integer) {
         Data delta(obs_data_create(),obs_data_release);
         write(delta,n,std::clamp(c.snapshot,n.low,n.high));
         obs_source_update(target.get(),delta.get());
-      } else status(c,self.get(),"Disabled — starting value unavailable for this target");
+      } else {
+        c.stop_reason=Controller::StopReason::Invalid;
+        status(c,self.get(),"Disabled — starting value unavailable for this target");
+      }
       continue;
     }
     if (!(cfg == c.last)) { c.active=false; c.releasing=false; c.watch.reset(); c.last=cfg; }
@@ -271,10 +282,11 @@ void pump(void *)
     }
     auto &w=*c.watch;
     if (w.external || (w.wrote && !modulator::same_value(read_value(target.get(),w.number),w.expected,w.number.integer))) {
-      disable(c,self.get(),"Paused — target changed externally; enable the eye to restart"); continue;
+      disable(c,self.get(),"Paused — target changed externally; enable the eye to restart",Controller::StopReason::ExternalEdit); continue;
     }
     if (requested && c.releasing) { c.active=false; c.releasing=false; }
     if (!c.active) {
+      c.stop_reason=Controller::StopReason::None;
       c.active=true; c.started=now; c.snapshot=read_value(target.get(),w.number);
       c.ease_start=c.snapshot;
       c.snapshot_uuid=uuid; c.snapshot_key=cfg.key; c.snapshot_integer=w.number.integer;
@@ -324,7 +336,7 @@ void pump(void *)
       if(!parent || requested==c.releasing || obs_source_removed(batch.target.get())) continue;
       auto d=settings(self.get());if(!(config(d.get())==c.last))continue;
       if(c.watch->external || !modulator::same_value(read_value(batch.target.get(),change.number),change.observed,change.number.integer)) {
-        disable(c,self.get(),"Paused — target changed externally; enable the eye to restart");continue;
+        disable(c,self.get(),"Paused — target changed externally; enable the eye to restart",Controller::StopReason::ExternalEdit);continue;
       }
       c.watch->write_generation.fetch_add(1);
       c.watch->expected=change.value;c.watch->wrote=true;batch.writing.push_back(c.watch.get());
@@ -482,6 +494,114 @@ void render(void *data,gs_effect_t *)
 }
 }
 
+namespace modulator {
+namespace {
+// These caches/signals exist only during a visible monitoring session. They
+// never submit settings and cannot participate in the engine's ownership watch.
+struct CachedProperty {
+  obs_weak_source_t *target;
+  Numeric number;
+  bool valid = false;
+  std::atomic<bool> dirty{true};
+  std::string signature;
+  static void schema(void *p, calldata_t *) { static_cast<CachedProperty *>(p)->dirty=true; }
+  CachedProperty(obs_source_t *s, std::string sig) : target(obs_source_get_weak_source(s)), signature(std::move(sig))
+  { signal_handler_connect(obs_source_get_signal_handler(s),"update_properties",schema,this); }
+  ~CachedProperty() {
+    auto s=own(obs_weak_source_get_source(target));
+    if(s)signal_handler_disconnect(obs_source_get_signal_handler(s.get()),"update_properties",schema,this);
+    obs_weak_source_release(target);
+  }
+};
+class ControllerMonitor final : public MonitorFeed {
+  std::map<std::string,std::unique_ptr<CachedProperty>> cache;
+public:
+  void clear() override { cache.clear(); }
+  bool set_enabled(const std::string &id, bool enabled) override {
+    if(stopping)return false;
+    std::vector<Handle> list;
+    {std::lock_guard<std::mutex> lock(registry_mutex);list=controllers;}
+    for(auto &h:list) {
+      std::lock_guard<std::recursive_mutex> lock(h->mutex);
+      if(h->identity!=id || h->dead)continue;
+      auto self=own(obs_weak_source_get_source(h->self));
+      if(!self || obs_source_removed(self.get()) || !obs_filter_get_parent(self.get()))return false;
+      obs_source_set_enabled(self.get(),enabled);
+      return obs_source_enabled(self.get())==enabled;
+    }
+    return false;
+  }
+  std::vector<MonitorRow> sample() override {
+    if(stopping){clear();return {};}
+    std::vector<Handle> list;
+    {std::lock_guard<std::mutex> lock(registry_mutex);list=controllers;}
+    std::vector<MonitorRow> rows;
+    std::vector<std::string> live;
+    const double now=static_cast<double>(os_gettime_ns())/1e9;
+    for(auto &h:list) {
+      std::lock_guard<std::recursive_mutex> lock(h->mutex);
+      if(h->dead)continue;
+      auto self=own(obs_weak_source_get_source(h->self));
+      auto parent=own(self ? obs_source_get_ref(obs_filter_get_parent(self.get())):nullptr);
+      if(!self || obs_source_removed(self.get()) || !parent || obs_source_removed(parent.get()))continue;
+      auto d=settings(self.get());const Config cfg=config(d.get());
+      MonitorRow row;row.id=h->identity;row.source=obs_source_get_name(parent.get());row.name=obs_source_get_name(self.get());
+      row.enabled=obs_source_enabled(self.get());row.low=cfg.low;row.high=cfg.high;row.waveform=cfg.wave;
+      row.property=cfg.key;row.reason=h->status;row.integer=cfg.type==1;
+      const std::string sig=cfg.source+"/"+cfg.filter+"/"+cfg.key+"/"+std::to_string(cfg.type)+"/"+obs_source_get_uuid(parent.get());
+      auto it=cache.find(row.id);Source target=own(nullptr);
+      if(it!=cache.end() && it->second->signature==sig)target=own(obs_weak_source_get_source(it->second->target));
+      if(target && (obs_source_removed(target.get()) ||
+          (!cfg.filter.empty() && (!obs_filter_get_parent(target.get()) ||
+            std::string(obs_source_get_uuid(obs_filter_get_parent(target.get())))!=
+              (cfg.source=="@parent" ? obs_source_get_uuid(parent.get()):cfg.source)))))target.reset();
+      if(!target) {
+        cache.erase(row.id);target=resolve(self.get(),cfg);
+        if(target)cache[row.id]=std::make_unique<CachedProperty>(target.get(),sig);
+      }
+      if(target) {
+        auto &entry=*cache.at(row.id);
+        if(entry.dirty.exchange(false))entry.valid=find_numeric(target.get(),cfg.key,entry.number) &&
+            cfg.type==(entry.number.integer ? 1:2);
+        row.target=obs_source_get_name(target.get());
+        if(entry.valid) {
+          row.property=entry.number.label;row.integer=entry.number.integer;
+          row.value=read_value(target.get(),entry.number);row.available=std::isfinite(row.value);
+        }
+      } else row.target="Missing target";
+      const bool compatible=cfg==h->last;
+      if(compatible && h->releasing && !(row.enabled && h->gate_changed))row.state=MonitorState::EasingOut;
+      else if(row.enabled) {
+        if(!obs_source_showing(parent.get()))row.state=MonitorState::Waiting;
+        else if(!compatible || !h->active || h->gate_changed)row.state=MonitorState::Starting;
+        else if(cfg.ease_in && now-h->started<cfg.period)row.state=MonitorState::EasingIn;
+        else row.state=MonitorState::Running;
+      } else if(compatible && h->stop_reason==Controller::StopReason::ExternalEdit)row.state=MonitorState::Paused;
+      else if(compatible && h->stop_reason==Controller::StopReason::Invalid)row.state=MonitorState::Error;
+      if(!row.available && !cfg.key.empty())row.state=MonitorState::Error;
+      if(!row.available && !cfg.key.empty())row.reason=target ?
+        "Target property is unavailable or changed type; select the property again" :
+        "Target source/filter is missing; select a replacement";
+      live.push_back(row.id);rows.push_back(std::move(row));
+    }
+    for(auto i=cache.begin();i!=cache.end();) {
+      if(std::find(live.begin(),live.end(),i->first)==live.end())i=cache.erase(i);else ++i;
+    }
+    std::sort(rows.begin(),rows.end(),[](const MonitorRow &a,const MonitorRow &b){
+      if(a.source!=b.source)return a.source<b.source;
+      if(a.name!=b.name)return a.name<b.name;
+      return a.id<b.id;
+    });
+    return rows;
+  }
+};
+}
+std::unique_ptr<MonitorFeed> make_monitor_feed() { return std::make_unique<ControllerMonitor>(); }
+#ifdef MODULATOR_TESTING
+void monitor_test_pump() { pump(nullptr); }
+#endif
+}
+
 bool obs_module_load(void)
 {
   stopping=false;
@@ -490,10 +610,24 @@ bool obs_module_load(void)
   info.get_defaults=defaults;info.get_properties=get_properties;info.video_render=render;
   info.filter_add=filter_added;info.load=load;
   obs_register_source(&info);obs_add_tick_callback(tick,nullptr);
-  blog(LOG_INFO,"[obs-modulator] Loaded %s (LFO only)", MODULATOR_VERSION);return true;
+#ifdef MODULATOR_DOCK
+  blog(LOG_INFO,"[obs-modulator] Loaded %s (LFO + monitor)", MODULATOR_VERSION);
+#else
+  blog(LOG_INFO,"[obs-modulator] Loaded %s (LFO only)", MODULATOR_VERSION);
+#endif
+  return true;
+}
+void obs_module_post_load(void)
+{
+#ifdef MODULATOR_DOCK
+  modulator::install_frontend();
+#endif
 }
 void obs_module_unload(void)
 {
+#ifdef MODULATOR_DOCK
+  modulator::shutdown_frontend();
+#endif
   stopping=true;obs_remove_tick_callback(tick,nullptr);
   // Frontend/module shutdown must drain its UI queue before unloading code.
   obs_queue_task(OBS_TASK_UI,pump,nullptr,true);

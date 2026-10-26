@@ -4,7 +4,7 @@ I made this to bring risk and excitement to your streams in the form of LFO cont
 
 ## Preview builds
 
-Development candidate **0.1.2** adds Ease in / out and Glider. The published [Preview Alpha 0.1.1](https://github.com/actuallysparky/obs-modulator/releases/tag/v0.1.1-alpha.1) predates these additions; use a 0.1.2 candidate to try them.
+[Preview Alpha 0.2.0](https://github.com/actuallysparky/obs-modulator/releases/tag/v0.2.0-alpha.1) adds the **Modulator Monitor** dock: live values, range markers, short histories, activity states and eye toggles for your mappings, all at paw's reach mid-stream. Ease in / out and Glider are included too. Download the package for your OBS installation below; [Preview Alpha 0.1.2](https://github.com/actuallysparky/obs-modulator/releases/tag/v0.1.2-alpha.1) remains available for rollback.
 
 These preview builds target OBS 32.2.2. The Mac bundle contains Apple Silicon and Intel slices. The Linux archive targets native Ubuntu/Kubuntu 24.04 x86-64 OBS; it is not a Flatpak package. Check the accompanying candidate report for the architectures and runtime tests actually completed. A separate x86-64 Flatpak extension recipe is included below. Windows builds remain a separate work item.
 
@@ -15,7 +15,7 @@ Quit OBS while streaming, recording and virtual camera are inactive. Keep a copy
 - Mac: place `obs-modulator.plugin` in `~/Library/Application Support/obs-studio/plugins/`. This preview uses an ad-hoc signature, not Developer ID notarization. If macOS blocks it, report the message; signed/notarized distribution remains a release task.
 - Native Linux: place the complete `obs-modulator` directory in `~/.config/obs-studio/plugins/`, or the equivalent OBS configuration directory when `XDG_CONFIG_HOME` is customized. The layout must be `plugins/obs-modulator/bin/64bit/obs-modulator.so` plus `plugins/obs-modulator/data/locale/`.
 
-Reopen OBS. Verify the current log contains `[obs-modulator] Loaded 0.1.2 (LFO only)` and the source's Add Effect Filter menu contains **LFO Modulator**. Start in an expendable test collection. For Flatpak OBS, use the extension build below instead of the native Linux archive.
+Reopen OBS. Verify the current log reports `[obs-modulator] Loaded` with the version from the archive manifest, and the source's Add Effect Filter menu contains **LFO Modulator**. Start in an expendable test collection. For Flatpak OBS, use the extension build below instead of the native Linux archive.
 
 ## Try it
 
@@ -31,6 +31,12 @@ Reopen OBS. Verify the current log contains `[obs-modulator] Loaded 0.1.2 (LFO o
 
 Duplicate the LFO filter for more controls. One active LFO owns each target/property. Transforms, mixer volume and application settings are outside this version.
 
+## Live monitor dock
+
+Open **Docks → Modulator Monitor** to see all mappings, current target values, range markers, short histories and activity states. Its checkbox is the existing filter eye; **Off** can still show **Easing out**, and an enabled mapping with a hidden parent can show **Waiting**. The value is the target setting read back from OBS, not shader-internal smoothing.
+
+The dock refreshes only while visible. Closing it, hiding its tab or minimizing stops its timer, reads, history and paints; modulation itself continues with its existing rules. Reopening starts a fresh history. It starts closed: open it when you want a look, and dock or float it wherever it fits.
+
 ## Limits
 
 Some target widgets do not redraw continuously; check the rendered effect and reopen the target dialog to inspect settings. Same-value or transient outside writes cannot reliably be detected. A stale dialog can submit an old target value and pause the LFO. Preview/shared-source visibility can keep it running, and saving a collection can save the instantaneous target value. Target plugins may perform expensive work or change shader randomness on update. Short cycles can alias at the video frame rate.
@@ -45,7 +51,7 @@ Please include the preview version and archive checksum, OS/CPU architecture, ex
 
 ## Build
 
-C++17, CMake 3.24+, Ninja, Python 3 and a matching libobs SDK are required. Inputs used for these previews are hash-locked in `ci/dependencies.json`. `cmake --preset core`, `cmake --build build-core` and `ctest --test-dir build-core` run the platform-independent core checks. Linux CI installs the pinned official OBS package, configures `linux-x86_64`, and runs synthetic and real Shaderfilter rendering tests under Xvfb/Mesa. Software rendering in CI does not qualify a user's GPU/session.
+C++17, CMake 3.24+, Ninja, Python 3 and a matching libobs SDK are required. The monitor dock also needs a matching OBS frontend API SDK and Qt 6 Widgets; core-only builds remain Qt-free. Use `MODULATOR_DOCK=OFF` for a filter-only plugin. The Mac CI wrapper downloads the official hash-pinned OBS Qt SDK; it does not bundle Qt with the plugin. Inputs used for these previews are hash-locked in `ci/dependencies.json`. `cmake --preset core`, `cmake --build build-core` and `ctest --test-dir build-core` run the platform-independent core checks. Linux CI installs the pinned official OBS package, configures `linux-x86_64`, and runs synthetic and real Shaderfilter rendering tests under Xvfb/Mesa. Software rendering in CI does not qualify a user's GPU/session.
 
 For Mac, supply a universal libobs SDK through `MODULATOR_SDK`, plus `MODULATOR_OBS_FRAMEWORKS`, `MODULATOR_OBS_GRAPHICS` and `MODULATOR_OBS_DATA`; configure `macos-universal`. `ci/mac-sdk.py` creates an imported target from explicit OBS source headers, a library and SIMDe headers. `MODULATOR_SHADERFILTER` and `MODULATOR_SHADERFILTER_DATA` enable the separate Shaderfilter test. `ci/package.py` packages a CMake installation tree with this guide, file hashes and source provenance.
 

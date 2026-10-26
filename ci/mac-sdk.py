@@ -9,6 +9,7 @@ p.add_argument("--source", type=Path, required=True)
 p.add_argument("--library", type=Path, required=True)
 p.add_argument("--simde", type=Path, required=True)
 p.add_argument("--output", type=Path, required=True)
+p.add_argument("--frontend", type=Path, help="Matching OBS frontend dylib (needed for the monitor dock)")
 a = p.parse_args()
 for f in [a.source / "libobs/obs.h", a.library, a.simde / "simde/x86/sse2.h"]:
     if not f.exists():
@@ -21,3 +22,10 @@ includes = ";".join(str(x.resolve()) for x in [a.source / "libobs", a.output, a.
     'set_target_properties(OBS::libobs PROPERTIES IMPORTED_LOCATION "' + str(a.library.resolve()) +
     '" INTERFACE_INCLUDE_DIRECTORIES "' + includes + '")\n')
 print("Local libobs SDK configuration prepared")
+if a.frontend:
+    if not a.frontend.is_file():
+        raise SystemExit("Missing frontend library")
+    (a.output / "obs-frontend-apiConfig.cmake").write_text(
+        'add_library(OBS::frontend-api SHARED IMPORTED)\n'
+        'set_target_properties(OBS::frontend-api PROPERTIES IMPORTED_LOCATION "' + str(a.frontend.resolve()) +
+        '" INTERFACE_INCLUDE_DIRECTORIES "' + str((a.source / 'frontend/api').resolve()) + '")\n')

@@ -2,6 +2,10 @@
   "obs_version": "32.2.2",
   "shaderfilter_version": "2.6.0",
   "assets": {
+    "qt-mac": {
+      "url": "https://github.com/obsproject/obs-deps/releases/download/2026-07-15/macos-deps-qt6-2026-07-15-universal.tar.xz",
+      "sha256": "d4b8058612a7067e44b2205fe7925ee24e9ec6b15ac8c29d3e6230c70030b102"
+    },
     "obs-linux": {
       "url": "https://github.com/obsproject/obs-studio/releases/download/32.2.2/OBS-Studio-32.2.2-Ubuntu-24.04-x86_64.deb",
       "sha256": "b6557ca2059287210332accc94c267094050489cffffc5c832e746e3a418dab0"
