@@ -1,5 +1,6 @@
 {
   "obs_version": "32.2.2",
+  "flatpak_obs_commit": "21b35765922fb5c8b92ccdccedc0d8ca709b12f86a961780350199082da822ef",
   "shaderfilter_version": "2.6.0",
   "assets": {
     "qt-mac": {

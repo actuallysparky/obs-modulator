@@ -8,6 +8,11 @@ plugin_id=com.obsproject.Studio.Plugin.Modulator
 mkdir -p dist
 flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
 flatpak install --user --noninteractive --assumeyes flathub com.obsproject.Studio//stable org.freedesktop.Sdk//25.08
+# The stable branch moves independently of this release's pinned OBS SDK.
+# Select the previously qualified 32.2.2 app commit in this disposable account.
+obs_commit=$(python3 -c 'import json; print(json.load(open("ci/dependencies.json"))["flatpak_obs_commit"])')
+flatpak update --user --noninteractive --assumeyes --commit="$obs_commit" com.obsproject.Studio
+test "$(flatpak info --user --show-commit com.obsproject.Studio)" = "$obs_commit"
 flatpak info --user --show-metadata com.obsproject.Studio > dist/obs-flatpak-metadata.ini
 flatpak info --user com.obsproject.Studio > dist/obs-flatpak-info.txt
 flatpak info --user org.freedesktop.Sdk//25.08 > dist/sdk-flatpak-info.txt
