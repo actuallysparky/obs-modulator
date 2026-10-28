@@ -411,7 +411,10 @@ int main(int argc,char **argv){
   props=obs_source_properties(lfo);obs_property_button_clicked(obs_properties_get(props,"play"),lfo);obs_properties_destroy(props);
   WAIT(status(lfo).find("Completed")==0);CHECK(value(shader)==.4);WAIT(pixel.load()<130);
   change(shader,"gain",.81);next_frames();d=obs_source_get_settings(lfo);obs_data_set_int(d,"waveform",5);
-  obs_data_set_bool(d,"ease_out",true);obs_data_set_double(d,"period",.4);obs_source_update(lfo,d);obs_data_release(d);
+  // A cold Intel software-rendered shader can stall video ticks for ~850 ms.
+  // Keep the excursion observable without changing elapsed-time semantics or
+  // any value, pixel, completion, return or cancellation assertion.
+  obs_data_set_bool(d,"ease_out",true);obs_data_set_double(d,"period",2);obs_source_update(lfo,d);obs_data_release(d);
   props=obs_source_properties(lfo);obs_property_button_clicked(obs_properties_get(props,"play"),lfo);obs_properties_destroy(props);
   next_controller_pump();CHECK(value(shader)==.81);
   largest_task_gap_ns=0;last_task_ns=os_gettime_ns();const int shot_frames=delivered.load();
