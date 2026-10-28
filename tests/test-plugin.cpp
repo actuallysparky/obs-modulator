@@ -23,6 +23,13 @@ static std::atomic<int> updates{0};
 static std::atomic<size_t> peak_queue{0};
 static std::atomic<int> pixel{255};
 static std::atomic<int> rendered{0},delivered{0};
+static uint64_t last_task_ns=0, largest_task_gap_ns=0;
+static void execute_task(obs_task_t task,void *param)
+{
+  const auto now=os_gettime_ns();
+  if(last_task_ns)largest_task_gap_ns=std::max(largest_task_gap_ns,now-last_task_ns);
+  last_task_ns=now;task(param);
+}
 static uint64_t rss() { return test_platform::resident_bytes(); }
 static double cpu() { return test_platform::cpu_seconds(); }
 // Standalone SDK tests need an explicit effects path. OBS 32 retains this API
@@ -40,7 +47,7 @@ static void drain()
 {
   std::deque<std::pair<obs_task_t,void *>> q;
   {std::lock_guard<std::mutex> lock(queue_mutex);q.swap(tasks);}
-  for(auto &t:q)t.first(t.second);
+  for(auto &t:q)execute_task(t.first,t.second);
 }
 static void run(double seconds)
 {
@@ -73,14 +80,17 @@ static void next_controller_pump()
     if(task.first)break;
     test_platform::process_events();std::this_thread::sleep_for(std::chrono::milliseconds(1));
   }
-  CHECK(task.first);task.first(task.second);
+  CHECK(task.first);execute_task(task.first,task.second);
 }
 static const char *source_name(void *){return "Modulator test source";}
 static void *source_create(obs_data_t *,obs_source_t *s){return s;}
 static void source_destroy(void *){}
 static std::atomic<bool> integer_mode{false}, hide_gain{false};
+static std::atomic<int> property_delay_ms{0};
 static obs_properties_t *source_properties(void *)
 {
+  const int delay=property_delay_ms.exchange(0);
+  if(delay)std::this_thread::sleep_for(std::chrono::milliseconds(delay));
   auto *p=obs_properties_create();auto *group=obs_properties_create();
   if(integer_mode)obs_properties_add_int(group,"gain","Gain",0,10,1);
   else obs_properties_add_float_slider(group,"gain","Gain",0,1,.001);
@@ -326,6 +336,17 @@ int main(int argc,char **argv){
     held=value(source);run(.03);CHECK(value(source)==held);release_controller(source,lfo);
   }
 
+  // Preparing a cold target must not consume a fresh shot's playback time.
+  // Delay metadata AFTER Play has captured readback, before activation resolves
+  // its native property context. Keep the existing short-gesture checks intact.
+  change(source,"gain",.81);next_frames();lfo=controller(source);
+  d=obs_source_get_settings(lfo);obs_data_set_bool(d,"one_shot",true);obs_data_set_int(d,"waveform",5);
+  obs_data_set_double(d,"minimum",.2);obs_data_set_double(d,"maximum",.4);
+  obs_data_set_double(d,"period",.2);obs_data_set_bool(d,"ease_out",true);obs_source_update(lfo,d);obs_data_release(d);
+  props=obs_source_properties(lfo);obs_property_button_clicked(obs_properties_get(props,"play"),lfo);obs_properties_destroy(props);
+  property_delay_ms=800;next_controller_pump();CHECK(value(source)==.81);
+  WAIT(value(source)<.6);WAIT(status(lfo).find("Completed")==0);CHECK(value(source)==.81);release_controller(source,lfo);
+
   // Real Shaderfilter is loaded explicitly, never the user's scene collection.
   if(argc>=8 && argv[6][0]) {
   obs_module_t *shader_module=nullptr;
@@ -392,7 +413,12 @@ int main(int argc,char **argv){
   change(shader,"gain",.81);next_frames();d=obs_source_get_settings(lfo);obs_data_set_int(d,"waveform",5);
   obs_data_set_bool(d,"ease_out",true);obs_data_set_double(d,"period",.4);obs_source_update(lfo,d);obs_data_release(d);
   props=obs_source_properties(lfo);obs_property_button_clicked(obs_properties_get(props,"play"),lfo);obs_properties_destroy(props);
-  next_controller_pump();CHECK(value(shader)==.81);WAIT(value(shader)<.6);WAIT(pixel.load()<180);
+  next_controller_pump();CHECK(value(shader)==.81);
+  largest_task_gap_ns=0;last_task_ns=os_gettime_ns();const int shot_frames=delivered.load();
+  const bool excursion=wait_for([&](){return value(shader)<.6;});
+  std::fprintf(stderr,"Glider shot: excursion=%d enabled=%d gain=%.17g frames=%d largest_pump_gap_ms=%.3f status=%s\n",
+    excursion,obs_source_enabled(lfo),value(shader),delivered.load()-shot_frames,largest_task_gap_ns/1e6,status(lfo).c_str());
+  CHECK(excursion);WAIT(pixel.load()<180);
   WAIT(status(lfo).find("Completed")==0);CHECK(value(shader)==.81);WAIT(pixel.load()>200);
   // Third-party property callbacks must drive the actual rendered parameter,
   // not merely the virtual macro's stored position. This optional host feature

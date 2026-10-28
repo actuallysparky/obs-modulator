@@ -416,6 +416,11 @@ void pump(void *)
     auto &w=*c.watch;
     if(requested && c.releasing && !c.natural_return && !cfg.one_shot){c.active=false;c.releasing=false;}
     const double current=read_value(target.get(),w.number);
+    // Native property preparation can block. A fresh/retriggered performance
+    // starts only once its target and starting value are ready, not at the old
+    // frame timestamp sampled before that work. Existing runs still catch up
+    // to elapsed time after stalls instead of extending their deadlines.
+    const double motion_now=engine_now();
     if(c.play_value_valid) {
       const bool external=c.play_uuid==uuid && c.play_key==cfg.key &&
         !modulator::same_value(current,c.play_value,w.number.integer);
@@ -423,14 +428,14 @@ void pump(void *)
       if(external){disable(c,self.get(),"Paused — target changed after Play; operator value preserved",Controller::StopReason::ExternalEdit);continue;}
     }
     if(!c.active) {
-      c.stop_reason=Controller::StopReason::None;c.armed=false;c.active=true;c.started=now;c.snapshot=current;c.ease_start=current;
+      c.stop_reason=Controller::StopReason::None;c.armed=false;c.active=true;c.started=motion_now;c.snapshot=current;c.ease_start=current;
       c.snapshot_uuid=uuid;c.snapshot_key=cfg.key;c.snapshot_integer=w.number.integer;c.snapshot_valid=std::isfinite(current);
       c.releasing=false;c.natural_return=false;
       if(cfg.one_shot)++c.shot_index;
       retrigger=false;
     }
     if(requested && (c.restart.exchange(false) || retrigger)) {
-      c.started=now;c.ease_start=current;c.releasing=false;c.natural_return=false;
+      c.started=motion_now;c.ease_start=current;c.releasing=false;c.natural_return=false;
       if(cfg.one_shot)++c.shot_index;
     }
     const auto wave=static_cast<modulator::Wave>(cfg.wave);
@@ -438,18 +443,18 @@ void pump(void *)
       w.number.integer,w.number.low,w.number.high,c.shot_seed,cfg.ease_in,c.ease_start,c.shot_index);};
     if(!requested) {
       c.restart=false;
-      if(!c.releasing){c.releasing=true;c.release_started=now;c.release_from=current;}
+      if(!c.releasing){c.releasing=true;c.release_started=motion_now;c.release_from=current;}
       c.natural_return=false;
-    } else if(cfg.one_shot && !c.releasing && now-c.started>=cfg.period && cfg.ease_out) {
+    } else if(cfg.one_shot && !c.releasing && motion_now-c.started>=cfg.period && cfg.ease_out) {
       c.releasing=true;c.natural_return=true;c.release_started=c.started+cfg.period;c.release_from=shot(cfg.period);
     }
-    const double value=c.releasing ? modulator::eased_return(now-c.release_started,cfg.period,c.release_from,c.snapshot,
+    const double value=c.releasing ? modulator::eased_return(motion_now-c.release_started,cfg.period,c.release_from,c.snapshot,
         w.number.integer,w.number.low,w.number.high)
-      : cfg.one_shot ? shot(now-c.started)
-      : modulator::mapped(wave,now-c.started,cfg.period,cfg.low,cfg.high,w.number.integer,
+      : cfg.one_shot ? shot(motion_now-c.started)
+      : modulator::mapped(wave,motion_now-c.started,cfg.period,cfg.low,cfg.high,w.number.integer,
           w.number.low,w.number.high,c.glider_seed,cfg.ease_in,c.ease_start);
     if(!std::isfinite(value)){disable(c,self.get(),"Disabled — non-finite target value");continue;}
-    const bool ending=c.releasing ? now-c.release_started>=cfg.period : cfg.one_shot && now-c.started>=cfg.period;
+    const bool ending=c.releasing ? motion_now-c.release_started>=cfg.period : cfg.one_shot && motion_now-c.started>=cfg.period;
     if((ending && current!=value) || !modulator::same_value(current,value,w.number.integer)) {
       auto &batch=batches[uuid];if(!batch.target)batch.target=own(obs_source_get_ref(target.get()));
       batch.changes.push_back({h,w.number,current,value,c.revision.load(),ending});
