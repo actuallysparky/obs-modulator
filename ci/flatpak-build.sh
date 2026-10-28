@@ -5,6 +5,15 @@
 set -euo pipefail
 manifest=packaging/flatpak/com.obsproject.Studio.Plugin.Modulator.json
 plugin_id=com.obsproject.Studio.Plugin.Modulator
+version=$(python3 - <<'PY'
+from pathlib import Path
+import re
+match = re.search(r'project\(obs-modulator VERSION ([0-9]+\.[0-9]+\.[0-9]+)', Path('CMakeLists.txt').read_text())
+assert match, 'Project version is missing'
+print(match.group(1))
+PY
+)
+bundle="dist/obs-modulator-${version}-preview-flatpak-x86_64.flatpak"
 mkdir -p dist
 flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
 flatpak install --user --noninteractive --assumeyes flathub com.obsproject.Studio//stable org.freedesktop.Sdk//25.08
@@ -28,8 +37,8 @@ PY
 flatpak-builder --user --arch=x86_64 --repo=flatpak-repo build-flatpak "$manifest"
 flatpak-builder --run build-flatpak "$manifest" sh -c 'ldd /app/plugins/Modulator/lib/obs-plugins/obs-modulator.so' > dist/flatpak-dependencies.txt
 if grep -q 'not found' dist/flatpak-dependencies.txt; then exit 1; fi
-flatpak build-bundle --runtime --arch=x86_64 flatpak-repo dist/obs-modulator-0.2.0-preview-flatpak-x86_64.flatpak "$plugin_id" stable
-flatpak install --user --noninteractive --assumeyes --bundle dist/obs-modulator-0.2.0-preview-flatpak-x86_64.flatpak
+flatpak build-bundle --runtime --arch=x86_64 flatpak-repo "$bundle" "$plugin_id" stable
+flatpak install --user --noninteractive --assumeyes --bundle "$bundle"
 # Only a disposable profile is visible to this smoke run; never use operator scenes.
 mkdir -p "$PWD/flatpak-smoke"
 set +e
@@ -41,9 +50,9 @@ xvfb-run -a -s '-screen 0 1920x1080x24' timeout --kill-after=10s --signal=INT 35
 status=$?
 set -e
 if [ "$status" != 0 ] && [ "$status" != 124 ]; then cat dist/flatpak-startup.log; exit "$status"; fi
-grep -F '[obs-modulator] Loaded 0.2.0' dist/flatpak-startup.log
+grep -F "[obs-modulator] Loaded ${version}" dist/flatpak-startup.log
 if grep -E 'Failed to load module.*obs-modulator|obs-modulator.*(undefined symbol|cannot open shared)' dist/flatpak-startup.log; then exit 1; fi
 flatpak info --user "$plugin_id" > dist/extension-flatpak-info.txt
-python3 ci/source.py --guide README.md --output dist/obs-modulator-0.2.0-source.tar.gz
+python3 ci/source.py --guide README.md --output "dist/obs-modulator-${version}-source.tar.gz"
 cp LICENSE README.md dist/
 sha256sum dist/*.flatpak dist/*-source.tar.gz > dist/SHA256SUMS

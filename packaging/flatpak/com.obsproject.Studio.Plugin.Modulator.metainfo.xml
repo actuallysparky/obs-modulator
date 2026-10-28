@@ -10,5 +10,5 @@
   <project_license>GPL-2.0-or-later</project_license>
   <url type="homepage">https://github.com/actuallysparky/obs-modulator</url>
   <description><p>Choose a waveform, cycle time and range to animate a numeric source or filter setting. Moving the target manually pauses the controller.</p></description>
-  <releases><release version="0.2.0" date="2026-10-22"/><release version="0.1.2" date="2026-10-22"/><release version="0.1.1" date="2026-10-22"/></releases>
+  <releases><release version="0.3.1" date="2026-10-27"/><release version="0.2.0" date="2026-10-22"/><release version="0.1.2" date="2026-10-22"/><release version="0.1.1" date="2026-10-22"/></releases>
 </component>

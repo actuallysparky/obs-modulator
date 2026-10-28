@@ -6,13 +6,15 @@
 #include <vector>
 
 namespace modulator {
-enum class MonitorState { Off, Waiting, Starting, EasingIn, Running, EasingOut, Paused, Error };
+enum class MonitorState { Off, Waiting, Starting, EasingIn, Running, EasingOut, Paused, Error, Completed, Cancelled };
 struct MonitorRow {
   std::string id, source, name, target, property, reason;
   MonitorState state = MonitorState::Off;
   bool enabled = false, available = false, integer = false;
   double value = 0, low = 0, high = 0;
   int waveform = 0;
+  bool one_shot = false, timed = false;
+  double progress = 0, phase_remaining = 0, total_remaining = 0;
 };
 // UI-thread, pull-only interface. No observer or sampling work is installed in
 // the modulation pump. Destroy/clear the session when the dock is not exposed.
@@ -21,6 +23,7 @@ public:
   virtual ~MonitorFeed() = default;
   virtual std::vector<MonitorRow> sample() = 0;
   virtual bool set_enabled(const std::string &id, bool enabled) = 0;
+  virtual bool play(const std::string &) { return false; }
   virtual void clear() = 0;
 };
 std::unique_ptr<MonitorFeed> make_monitor_feed();

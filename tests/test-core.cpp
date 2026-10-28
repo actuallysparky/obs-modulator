@@ -112,5 +112,41 @@ int main()
   CHECK(std::isnan(eased_return(0,0,0,1,false,0,1)));
   CHECK(std::isnan(eased_return(0,4,0,1,false,2,1)));
   CHECK(std::isnan(eased_return(0,4,0,std::numeric_limits<double>::infinity(),false,0,1)));
+  // Finite endpoints deliberately differ from periodic wrapping for saw/square.
+  for(int wave=0;wave<wave_count;++wave)for(bool ease:{false,true}) {
+    auto w=static_cast<Wave>(wave);
+    const double end=shot_mapped(w,4,4,-3,17,false,-20,20,seed,ease,7,1);
+    const bool high=wave==2 || wave==4 || (wave>=6 && wave<=8);
+    CHECK(end==(wave==5 ? -3+20*random_value(seed,1) : high ? 17:-3));
+    CHECK(shot_mapped(w,400,4,-3,17,false,-20,20,seed,ease,7,1)==end);
+    if(ease || wave==5)CHECK(shot_mapped(w,0,4,-3,17,false,-20,20,seed,ease,7,1)==7);
+    for(int i=0;i<=1000;++i) {
+      const double v=shot_mapped(w,i*.004,4,-3,17,false,-20,20,seed,ease,7,1);
+      CHECK(v>=-3 && v<=17);
+      CHECK(shot_mapped(w,i*.004,4,-3,17,true,-20,20,seed,ease,7,1)==std::round(v));
+    }
+  }
+  CHECK(shot_mapped(Wave::Sine,2,4,0,100,false,0,100,0,true,25,0)==62.5);
+  CHECK(shot_mapped(Wave::Square,4,4,0,1,false,0,1,0,false,0,0)==1);
+  CHECK(normalized(Wave::Square,1)==0);
+  for(int wave=6;wave<wave_count;++wave) {
+    auto w=static_cast<Wave>(wave);double previous=wave<9 ? -3:17;
+    for(int i=0;i<=1000;++i) {
+      const double v=shot_mapped(w,i*.004,4,-3,17,false,-3,17,0,false,0,0);
+      CHECK(wave<9 ? v>=previous-1e-12 : v<=previous+1e-12);previous=v;
+      if(i<1000)CHECK(same_value(normalized(w,i*.001),normalized(w,3+i*.001),false));
+    }
+    CHECK(normalized(w,1)==(wave<9 ? 0:1));
+  }
+  CHECK(normalized(Wave::ExponentialRising,.5)<.2);
+  CHECK(normalized(Wave::LogarithmicRising,.5)>.8);
+  CHECK(normalized(Wave::SCurveRising,.5)==.5);
+  CHECK(normalized(Wave::ExponentialFalling,.5)<.2);
+  for(int i=0;i<100;++i) {
+    CHECK(shot_mapped(Wave::Glider,i*.04,4,0,1,false,0,1,seed,false,.7,1)==
+      shot_mapped(Wave::Glider,i*.04,4,0,1,false,0,1,seed,true,.7,1));
+  }
+  CHECK(random_value(seed,1)!=random_value(seed,2));
+  CHECK(std::isnan(shot_mapped(Wave::Sine,0,0,0,1,false,0,1,0,false,0,1)));
   std::printf("%d core checks passed\n",checks);
 }

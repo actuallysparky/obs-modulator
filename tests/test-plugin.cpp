@@ -191,11 +191,11 @@ int main(int argc,char **argv){
   change(source,"gain",.83);next_frames();lfo=controller(source);
   props=obs_source_properties(lfo);
   CHECK(obs_property_get_type(obs_properties_get(props,"ease_in"))==OBS_PROPERTY_BOOL);
-  auto *waves=obs_properties_get(props,"waveform");CHECK(obs_property_list_item_count(waves)==6);
-  for(int i=0;i<6;++i)CHECK(obs_property_list_item_int(waves,i)==i);
+  auto *waves=obs_properties_get(props,"waveform");CHECK(obs_property_list_item_count(waves)==12);
+  for(int i=0;i<12;++i)CHECK(obs_property_list_item_int(waves,i)==i);
   CHECK(std::string(obs_property_list_item_name(waves,5))=="Glider");obs_properties_destroy(props);
   d=obs_source_get_settings(lfo);CHECK(!obs_data_get_bool(d,"ease_in"));
-  obs_data_set_bool(d,"ease_in",true);obs_data_set_double(d,"period",.3);
+  obs_data_set_bool(d,"ease_in",true);obs_data_set_bool(d,"ease_out",true);obs_data_set_double(d,"period",.3);
   obs_data_set_double(d,"minimum",.2);obs_data_set_double(d,"maximum",.4);obs_source_update(lfo,d);obs_data_release(d);
   obs_source_set_enabled(lfo,true);next_controller_pump();CHECK(value(source)==.83);
   run(.03);CHECK(value(source)>.4 && value(source)<=.83);CHECK(obs_source_enabled(lfo));
@@ -214,13 +214,13 @@ int main(int argc,char **argv){
   obs_source_set_enabled(lfo,true);next_controller_pump();CHECK(value(source)==.937);
   obs_source_set_enabled(lfo,false);run(.04);
   // Switching easing off immediately resumes ordinary waveform output.
-  d=obs_source_get_settings(lfo);obs_data_set_bool(d,"ease_in",false);obs_source_update(lfo,d);obs_data_release(d);
+  d=obs_source_get_settings(lfo);obs_data_set_bool(d,"ease_in",false);obs_data_set_bool(d,"ease_out",false);obs_source_update(lfo,d);obs_data_release(d);
   obs_source_set_enabled(lfo,true);next_controller_pump();CHECK(value(source)==.2);
   release_controller(source,lfo);
 
   // Checked: eye off returns to the activation value, holding ownership meanwhile.
   change(source,"gain",.83);next_frames();lfo=controller(source);
-  d=obs_source_get_settings(lfo);obs_data_set_bool(d,"ease_in",true);obs_data_set_double(d,"period",.3);
+  d=obs_source_get_settings(lfo);obs_data_set_bool(d,"ease_in",true);obs_data_set_bool(d,"ease_out",true);obs_data_set_double(d,"period",.3);
   obs_data_set_double(d,"minimum",.2);obs_data_set_double(d,"maximum",.4);obs_source_update(lfo,d);obs_data_release(d);
   obs_source_set_enabled(lfo,true);next_controller_pump();CHECK(value(source)==.83);
   run(.35);next_frames();CHECK(value(source)>=.2 && value(source)<=.4);
@@ -250,7 +250,7 @@ int main(int argc,char **argv){
   props=obs_source_properties(lfo);obs_property_button_clicked(obs_properties_get(props,"restore"),lfo);obs_properties_destroy(props);
   next_controller_pump();CHECK(value(source)==.937);run(.35);CHECK(value(source)==.937);
   obs_source_set_enabled(lfo,true);run(.35);next_frames();obs_source_set_enabled(lfo,false);next_controller_pump();
-  d=obs_source_get_settings(lfo);obs_data_set_bool(d,"ease_in",false);obs_source_update(lfo,d);obs_data_release(d);
+  d=obs_source_get_settings(lfo);obs_data_set_bool(d,"ease_in",false);obs_data_set_bool(d,"ease_out",false);obs_source_update(lfo,d);obs_data_release(d);
   next_controller_pump();held=value(source);run(.4);next_frames();CHECK(value(source)==held);
   // Unchecked: no delayed return, and next activation is immediate.
   obs_source_set_enabled(lfo,true);next_controller_pump();CHECK(value(source)==.2);
@@ -259,7 +259,7 @@ int main(int argc,char **argv){
 
   // Hidden sources finish their return too; returning early restarts smoothly above.
   change(source,"gain",.83);next_frames();lfo=controller(source);
-  d=obs_source_get_settings(lfo);obs_data_set_bool(d,"ease_in",true);obs_data_set_double(d,"period",.2);
+  d=obs_source_get_settings(lfo);obs_data_set_bool(d,"ease_in",true);obs_data_set_bool(d,"ease_out",true);obs_data_set_double(d,"period",.2);
   obs_source_update(lfo,d);obs_data_release(d);obs_source_set_enabled(lfo,true);run(.25);next_frames();
   obs_set_output_source(0,nullptr);obs_source_dec_showing(source);next_controller_pump();
   CHECK(status(lfo).find("Easing out")==0);WAIT(value(source)==.83);
@@ -273,7 +273,7 @@ int main(int argc,char **argv){
 
   // Integer tails round after interpolation and land exactly at their snapshot.
   integer_mode=true;change(source,"gain",7);next_frames();lfo=controller(source);
-  d=obs_source_get_settings(lfo);obs_data_set_bool(d,"ease_in",true);obs_data_set_double(d,"period",.2);
+  d=obs_source_get_settings(lfo);obs_data_set_bool(d,"ease_in",true);obs_data_set_bool(d,"ease_out",true);obs_data_set_double(d,"period",.2);
   obs_data_set_int(d,"property_type",1);obs_data_set_double(d,"maximum",2);obs_source_update(lfo,d);obs_data_release(d);
   obs_source_set_enabled(lfo,true);run(.25);next_frames();CHECK(value(source)<=2);
   obs_source_set_enabled(lfo,false);next_controller_pump();held=value(source);CHECK(held==std::round(held));
@@ -283,12 +283,12 @@ int main(int argc,char **argv){
   remote=obs_source_create("modulator_test_source","return target",nullptr,nullptr);CHECK(remote);
   change(remote,"gain",.83);next_frames();lfo=controller(source);
   d=obs_source_get_settings(lfo);obs_data_set_string(d,"source_uuid",obs_source_get_uuid(remote));
-  obs_data_set_bool(d,"ease_in",true);obs_data_set_double(d,"period",.2);obs_source_update(lfo,d);obs_data_release(d);
+  obs_data_set_bool(d,"ease_in",true);obs_data_set_bool(d,"ease_out",true);obs_data_set_double(d,"period",.2);obs_source_update(lfo,d);obs_data_release(d);
   obs_source_set_enabled(lfo,true);run(.25);next_frames();obs_source_set_enabled(lfo,false);next_controller_pump();
   obs_source_remove(remote);next_controller_pump();CHECK(status(lfo).find("target was removed")!=std::string::npos);
   held=value(remote);run(.25);CHECK(value(remote)==held);obs_source_release(remote);release_controller(source,lfo);
   change(source,"gain",.83);next_frames();lfo=controller(source);
-  d=obs_source_get_settings(lfo);obs_data_set_bool(d,"ease_in",true);obs_data_set_double(d,"period",.2);
+  d=obs_source_get_settings(lfo);obs_data_set_bool(d,"ease_in",true);obs_data_set_bool(d,"ease_out",true);obs_data_set_double(d,"period",.2);
   obs_source_update(lfo,d);obs_data_release(d);obs_source_set_enabled(lfo,true);run(.25);next_frames();
   obs_source_set_enabled(lfo,false);next_controller_pump();held=value(source);release_controller(source,lfo);
   run(.25);next_frames();CHECK(value(source)==held);
@@ -302,12 +302,29 @@ int main(int argc,char **argv){
   lfo=obs_load_private_source(serialized);obs_data_release(serialized);CHECK(lfo);obs_source_filter_add(source,lfo);
   CHECK(std::string(obs_source_get_uuid(lfo))==glider_uuid);next_controller_pump();CHECK(value(source)==first_glider);
   d=obs_source_get_settings(lfo);CHECK(obs_data_get_int(d,"waveform")==5);CHECK(!obs_data_get_bool(d,"ease_in"));
-  obs_data_set_bool(d,"ease_in",true);obs_source_update(lfo,d);obs_data_release(d);
+  obs_data_set_bool(d,"ease_in",true);obs_data_set_bool(d,"ease_out",true);obs_source_update(lfo,d);obs_data_release(d);
   next_controller_pump();CHECK(value(source)==first_glider);
   serialized=obs_save_source(lfo);release_controller(source,lfo);lfo=obs_load_private_source(serialized);obs_data_release(serialized);CHECK(lfo);
   obs_source_filter_add(source,lfo);next_controller_pump();d=obs_source_get_settings(lfo);
   CHECK(obs_data_get_bool(d,"ease_in"));CHECK(obs_data_get_int(d,"waveform")==5);obs_data_release(d);CHECK(value(source)==first_glider);
-  change(lfo,"waveform",6);run(.05);WAIT(!obs_source_enabled(lfo));release_controller(source,lfo);
+  change(lfo,"waveform",12);run(.05);WAIT(!obs_source_enabled(lfo));release_controller(source,lfo);
+
+  // Exercise the actual compiled module's Play command and finite endings.
+  for(int wave=0;wave<12;++wave) {
+    change(source,"gain",.37);next_frames();lfo=controller(source);
+    d=obs_source_get_settings(lfo);obs_data_set_bool(d,"one_shot",true);
+    obs_data_set_int(d,"waveform",wave);obs_data_set_double(d,"period",.1);
+    obs_data_set_bool(d,"ease_in",wave%2);obs_data_set_bool(d,"ease_out",false);obs_source_update(lfo,d);obs_data_release(d);
+    props=obs_source_properties(lfo);CHECK(obs_property_visible(obs_properties_get(props,"play")));
+    CHECK(!obs_property_visible(obs_properties_get(props,"restart")));
+    if(wave==5)CHECK(!obs_property_enabled(obs_properties_get(props,"ease_in")));
+    obs_property_button_clicked(obs_properties_get(props,"play"),lfo);obs_properties_destroy(props);
+    next_controller_pump();CHECK(obs_source_enabled(lfo));
+    if(wave%2 || wave==5)CHECK(value(source)==.37);
+    WAIT(status(lfo).find("Completed")==0);CHECK(!obs_source_enabled(lfo));
+    if(wave!=5){const bool high=wave==2 || wave==4 || (wave>=6 && wave<=8);CHECK(value(source)==(high ? 1:0));}
+    held=value(source);run(.03);CHECK(value(source)==held);release_controller(source,lfo);
+  }
 
   // Real Shaderfilter is loaded explicitly, never the user's scene collection.
   if(argc>=8 && argv[6][0]) {
@@ -341,7 +358,7 @@ int main(int argc,char **argv){
   CHECK(obs_source_enabled(lfo));
   // Exercise both additions against real Shaderfilter settings/rendered frames.
   obs_source_set_enabled(lfo,false);run(.05);change(shader,"gain",.81);next_frames();WAIT(pixel.load()>200);
-  d=obs_source_get_settings(lfo);obs_data_set_int(d,"waveform",5);obs_data_set_bool(d,"ease_in",true);
+  d=obs_source_get_settings(lfo);obs_data_set_int(d,"waveform",5);obs_data_set_bool(d,"ease_in",true);obs_data_set_bool(d,"ease_out",true);
   obs_data_set_double(d,"period",.3);obs_data_set_double(d,"minimum",.2);obs_data_set_double(d,"maximum",.4);
   obs_source_update(lfo,d);obs_data_release(d);obs_source_set_enabled(lfo,true);next_controller_pump();CHECK(value(shader)==.81);
   const int glider_frames=delivered.load();run(.4);
@@ -366,40 +383,99 @@ int main(int argc,char **argv){
   // Manual takeover already disabled the eye; waiting on that flag would not
   // prove the queued Restore button command has run. Step its controller task.
   next_controller_pump();CHECK(!obs_source_enabled(lfo));CHECK(value(shader)==.81);
-  obs_source_set_enabled(lfo,true);next_controller_pump();CHECK(value(shader)==.81);
+  // One-shot ramp renders the held endpoint, then a Glider shot returns home.
+  d=obs_source_get_settings(lfo);obs_data_set_bool(d,"one_shot",true);obs_data_set_int(d,"waveform",6);
+  obs_data_set_bool(d,"ease_in",false);obs_data_set_bool(d,"ease_out",false);obs_data_set_double(d,"period",.15);
+  obs_source_update(lfo,d);obs_data_release(d);
+  props=obs_source_properties(lfo);obs_property_button_clicked(obs_properties_get(props,"play"),lfo);obs_properties_destroy(props);
+  WAIT(status(lfo).find("Completed")==0);CHECK(value(shader)==.4);WAIT(pixel.load()<130);
+  change(shader,"gain",.81);next_frames();d=obs_source_get_settings(lfo);obs_data_set_int(d,"waveform",5);
+  obs_data_set_bool(d,"ease_out",true);obs_data_set_double(d,"period",.4);obs_source_update(lfo,d);obs_data_release(d);
+  props=obs_source_properties(lfo);obs_property_button_clicked(obs_properties_get(props,"play"),lfo);obs_properties_destroy(props);
+  next_controller_pump();CHECK(value(shader)==.81);WAIT(value(shader)<.6);WAIT(pixel.load()<180);
+  WAIT(status(lfo).find("Completed")==0);CHECK(value(shader)==.81);WAIT(pixel.load()>200);
+  // Third-party property callbacks must drive the actual rendered parameter,
+  // not merely the virtual macro's stored position. This optional host feature
+  // is detected through its public properties, never special-cased in Modulator.
+  props=obs_source_properties(shader);
+  const bool native_macros=obs_properties_get(props,"_shaderfilter_controls_view")!=nullptr;
+  obs_properties_destroy(props);
+  if(native_macros) {
+    d=obs_source_get_settings(lfo);obs_data_set_string(d,"property","gesture");
+    obs_data_set_double(d,"minimum",0);obs_data_set_double(d,"maximum",100);obs_data_set_int(d,"waveform",6);
+    obs_data_set_double(d,"period",.4);obs_data_set_bool(d,"ease_in",false);obs_data_set_bool(d,"ease_out",false);
+    obs_source_update(lfo,d);obs_data_release(d);
+    props=obs_source_properties(lfo);obs_property_button_clicked(obs_properties_get(props,"play"),lfo);obs_properties_destroy(props);
+    next_controller_pump();CHECK(obs_source_enabled(lfo));
+    WAIT(status(lfo).find("Completed")==0);
+    CHECK(value(shader,"gesture")==100);CHECK(value(shader)==1);WAIT(pixel.load()>250);
+    const int frames_at_end=delivered.load();next_frames();CHECK(delivered.load()>frames_at_end && value(shader)==1);
+    // A continuous callback-driven ramp must also alter delivered pixels.
+    d=obs_source_get_settings(lfo);obs_data_set_bool(d,"one_shot",false);obs_data_set_int(d,"waveform",2);
+    obs_source_update(lfo,d);obs_data_release(d);obs_source_set_enabled(lfo,true);
+    WAIT(value(shader)<.5);WAIT(pixel.load()<180);CHECK(obs_source_enabled(lfo));
+    obs_source_set_enabled(lfo,false);next_frames();CHECK(!obs_source_enabled(lfo));
+    std::puts("Native macro one-shot/continuous settings and rendered pixels verified");
+  }
+  props=obs_source_properties(lfo);obs_property_button_clicked(obs_properties_get(props,"play"),lfo);obs_properties_destroy(props);
+  next_controller_pump();
   obs_source_filter_remove(source,shader);obs_source_release(shader);run(.07);WAIT(!obs_source_enabled(lfo));release_controller(source,lfo);
 
   } else {
     std::puts("Shaderfilter checks NOT RUN (use the separately configured shaderfilter test)");
   }
   CHECK(delivered.load()>0);CHECK(rendered.load()>0);
-  double soak=argc>=9 ? std::strtod(argv[8],nullptr):0;
+  const double soak=argc>=9 ? std::strtod(argv[8],nullptr):0;
   std::vector<obs_source_t *> mappings;
-  for(int i=0;i<32;++i){char key[16];snprintf(key,sizeof(key),"p%02d",i);auto *s=controller(source,key);mappings.push_back(s);}
-  run(.5);int baseline_updates=updates;uint32_t baseline_frames=obs_get_total_frames(),baseline_lagged=obs_get_lagged_frames();
-  const double baseline_cpu_start=cpu();
-  run(soak>0 ? 10: .25);
-  const double baseline_cpu=cpu()-baseline_cpu_start;
-  const uint64_t baseline_render_ns=obs_get_average_frame_time_ns();
-  uint32_t baseline_n=obs_get_total_frames()-baseline_frames,baseline_lag=obs_get_lagged_frames()-baseline_lagged;
-  baseline_updates=updates-baseline_updates;
-  for(auto *s:mappings)obs_source_set_enabled(s,true);
-  run(.2);int before=updates;uint32_t frames=obs_get_total_frames(),lagged=obs_get_lagged_frames();
-  const double active_cpu_start=cpu();uint64_t rss_start=rss(),rss_min=rss_start,rss_max=rss_start;
-  const double duration=soak>0 ? soak:1;
-  for(double elapsed=0;elapsed<duration;){double chunk=std::min(30.0,duration-elapsed);run(chunk);elapsed+=chunk;uint64_t bytes=rss();rss_min=std::min(bytes,rss_min);rss_max=std::max(bytes,rss_max);
-    if(soak>0){printf("SOAK %.0f/%.0f seconds; frames=%u lagged=%u rss=%llu queue_peak=%zu\n",elapsed,duration,obs_get_total_frames()-frames,obs_get_lagged_frames()-lagged,static_cast<unsigned long long>(bytes),peak_queue.load());fflush(stdout);}}
-  if(soak==0)WAIT(updates.load()>before);
-  const double active_cpu=cpu()-active_cpu_start;
-  const uint64_t active_render_ns=obs_get_average_frame_time_ns();
-  int written=updates-before;uint32_t frame_n=obs_get_total_frames()-frames,lag_n=obs_get_lagged_frames()-lagged;
-  for(auto *s:mappings)CHECK(obs_source_enabled(s));
-  CHECK(written>0);CHECK(written<=static_cast<int>(frame_n)+5);
-  CHECK(peak_queue<=1);
+  for(int i=0;i<32;++i){char key[16];snprintf(key,sizeof(key),"p%02d",i);auto *s=controller(source,key);mappings.push_back(s);
+    if(soak>0){auto *cfg=obs_source_get_settings(s);obs_data_set_bool(cfg,"one_shot",true);
+      obs_data_set_int(cfg,"waveform",i%12);obs_data_set_bool(cfg,"ease_in",i%2);obs_data_set_bool(cfg,"ease_out",i%3==0);
+      obs_source_update(s,cfg);obs_data_release(cfg);}}
+  run(.5);
+  double baseline_cpu=0,active_cpu=0,baseline_seconds=0,active_seconds=0;
+  uint32_t baseline_n=0,baseline_lag=0,frame_n=0,lag_n=0;
+  int baseline_updates=0,written=0;
+  uint64_t baseline_render_ns=0,active_render_ns=0;
+  uint64_t rss_start=rss(),rss_min=rss_start,rss_max=rss_start;
+  auto measure=[&](double seconds,bool active) {
+    const int before=updates;const auto frames=obs_get_total_frames(),lagged=obs_get_lagged_frames();
+    const double cpu_start=cpu();const auto start=std::chrono::steady_clock::now();
+    double elapsed=0,next_trigger=0;
+    do {
+      if(active && soak>0 && elapsed>=next_trigger && elapsed<seconds-.9) {
+        for(auto *s:mappings){auto *p=obs_source_properties(s);obs_property_button_clicked(obs_properties_get(p,"play"),s);obs_properties_destroy(p);}
+        next_trigger+=1;
+      }
+      run(std::min(.1,std::max(0.0,seconds-elapsed)));
+      elapsed=std::chrono::duration<double>(std::chrono::steady_clock::now()-start).count();
+    } while(elapsed<seconds);
+    const double used=cpu()-cpu_start;const auto rendered_ns=obs_get_average_frame_time_ns();
+    if(active){active_cpu+=used;active_seconds+=elapsed;frame_n+=obs_get_total_frames()-frames;
+      lag_n+=obs_get_lagged_frames()-lagged;written+=updates-before;active_render_ns=std::max(active_render_ns,rendered_ns);}
+    else {baseline_cpu+=used;baseline_seconds+=elapsed;baseline_n+=obs_get_total_frames()-frames;
+      baseline_lag+=obs_get_lagged_frames()-lagged;baseline_updates+=updates-before;baseline_render_ns=std::max(baseline_render_ns,rendered_ns);}
+  };
+  if(soak>0) {
+    // Matched alternating 15s disabled/15s one-shot windows, 60 comparisons
+    // during a 30-minute run. Same 32 mappings/renderer, no working OBS scenes.
+    for(double elapsed=0;elapsed<soak;) {
+      const double window=std::min(15.0,(soak-elapsed)/2);
+      measure(window,false);measure(window,true);
+      elapsed+=window*2;const auto bytes=rss();rss_min=std::min(rss_min,bytes);rss_max=std::max(rss_max,bytes);
+      for(auto *s:mappings)CHECK(!obs_source_enabled(s));
+      CHECK(baseline_updates==0);CHECK(peak_queue<=1);
+      printf("ONESHOT SOAK %.0f/%.0f seconds; active_frames=%u lagged=%u updates=%d rss=%llu queue_peak=%zu\n",
+        elapsed,soak,frame_n,lag_n,written,static_cast<unsigned long long>(bytes),peak_queue.load());fflush(stdout);
+    }
+  } else {
+    measure(.25,false);for(auto *s:mappings)obs_source_set_enabled(s,true);run(.2);measure(1,true);
+    for(auto *s:mappings)CHECK(obs_source_enabled(s));
+  }
+  CHECK(written>0);CHECK(written<=static_cast<int>(frame_n)+5);CHECK(peak_queue<=1);
   for(auto *s:mappings)release_controller(source,s);
   obs_remove_raw_video_callback(video_frame,nullptr);obs_set_output_source(0,nullptr);
   obs_source_dec_showing(source);obs_source_release(source);run(.1);
   drain();
-  if(argc>=10){FILE *f=fopen(argv[9],"w");CHECK(f);fprintf(f,"{\"checks\":%d,\"soak_seconds\":%.3f,\"mapping_count\":32,\"width\":1920,\"height\":1080,\"fps\":60,\"baseline_frames\":%u,\"baseline_lagged\":%u,\"baseline_updates\":%d,\"active_frames\":%u,\"active_lagged\":%u,\"batched_target_updates\":%d,\"baseline_cpu_seconds\":%.6f,\"active_cpu_seconds\":%.6f,\"baseline_render_ns\":%llu,\"active_render_ns\":%llu,\"rss_start\":%llu,\"rss_min\":%llu,\"rss_max\":%llu,\"rss_end\":%llu,\"queue_peak\":%zu}\n",checks,soak,baseline_n,baseline_lag,baseline_updates,frame_n,lag_n,written,baseline_cpu,active_cpu,static_cast<unsigned long long>(baseline_render_ns),static_cast<unsigned long long>(active_render_ns),static_cast<unsigned long long>(rss_start),static_cast<unsigned long long>(rss_min),static_cast<unsigned long long>(rss_max),static_cast<unsigned long long>(rss()),peak_queue.load());fclose(f);}
+  if(argc>=10){FILE *f=fopen(argv[9],"w");CHECK(f);fprintf(f,"{\"checks\":%d,\"soak_seconds\":%.3f,\"protocol\":\"%s\",\"baseline_seconds\":%.6f,\"active_seconds\":%.6f,\"mapping_count\":32,\"width\":1920,\"height\":1080,\"fps\":60,\"baseline_frames\":%u,\"baseline_lagged\":%u,\"baseline_updates\":%d,\"active_frames\":%u,\"active_lagged\":%u,\"batched_target_updates\":%d,\"baseline_cpu_seconds\":%.6f,\"active_cpu_seconds\":%.6f,\"baseline_render_ns\":%llu,\"active_render_ns\":%llu,\"rss_start\":%llu,\"rss_min\":%llu,\"rss_max\":%llu,\"rss_end\":%llu,\"queue_peak\":%zu}\n",checks,soak,soak>0 ? "matched-disabled-oneshot-windows":"continuous-smoke",baseline_seconds,active_seconds,baseline_n,baseline_lag,baseline_updates,frame_n,lag_n,written,baseline_cpu,active_cpu,static_cast<unsigned long long>(baseline_render_ns),static_cast<unsigned long long>(active_render_ns),static_cast<unsigned long long>(rss_start),static_cast<unsigned long long>(rss_min),static_cast<unsigned long long>(rss_max),static_cast<unsigned long long>(rss()),peak_queue.load());fclose(f);}
   obs_shutdown();std::printf("%d real-plugin checks passed\n",checks);return 0;
 }

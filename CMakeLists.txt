@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Sparky and OBS Modulator contributors
 # SPDX-License-Identifier: GPL-2.0-or-later
 cmake_minimum_required(VERSION 3.24)
-project(obs-modulator VERSION 0.2.0 LANGUAGES CXX)
+project(obs-modulator VERSION 0.3.1 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 option(BUILD_OBS_PLUGIN "Build the native OBS plugin" ON)
@@ -75,7 +75,7 @@ if(BUILD_OBS_PLUGIN)
       add_executable(test-dock tests/test-dock.cpp src/dock.cpp src/monitor.cpp)
       target_include_directories(test-dock PRIVATE src)
       target_compile_definitions(test-dock PRIVATE MODULATOR_TESTING)
-      target_link_libraries(test-dock PRIVATE Qt6::Widgets)
+      target_link_libraries(test-dock PRIVATE Qt6::Widgets modulator-core)
       modulator_warnings(test-dock)
       add_test(NAME dock COMMAND test-dock)
       set_tests_properties(dock PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")

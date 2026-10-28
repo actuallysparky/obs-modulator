@@ -15,6 +15,9 @@
 #include <util/base.h>
 #endif
 #include <QStyledItemDelegate>
+#include <QStyleOptionButton>
+#include <QKeyEvent>
+#include <QMouseEvent>
 #include <QTableView>
 #include <QVBoxLayout>
 #include <algorithm>
@@ -26,6 +29,12 @@
 namespace modulator {
 namespace {
 QString text(const std::string &s) { return QString::fromUtf8(s.c_str()); }
+QString timing(const MonitorRow &r) {
+  if(!r.timed)return {};
+  QString result=QString("Phase left: %1s").arg(r.phase_remaining,0,'f',1);
+  if(r.one_shot)result+=QString(" · Shot left: %1s").arg(r.total_remaining,0,'f',1);
+  return result;
+}
 QString number(double v, bool integer) { return QString::number(v, integer ? 'f':'g', integer ? 0:5); }
 struct Entry {
   MonitorRow row;
@@ -35,7 +44,8 @@ bool same(const MonitorRow &a, const MonitorRow &b) {
   return a.id==b.id && a.source==b.source && a.name==b.name && a.target==b.target &&
     a.property==b.property && a.reason==b.reason && a.state==b.state && a.enabled==b.enabled &&
     a.available==b.available && a.integer==b.integer && a.value==b.value && a.low==b.low &&
-    a.high==b.high && a.waveform==b.waveform;
+    a.high==b.high && a.waveform==b.waveform && a.one_shot==b.one_shot && a.timed==b.timed &&
+    a.progress==b.progress && a.phase_remaining==b.phase_remaining && a.total_remaining==b.total_remaining;
 }
 }
 class MonitorModel final : public QAbstractTableModel {
@@ -50,24 +60,27 @@ public:
   std::function<void()> changed;
   explicit MonitorModel(MonitorFeed &f, QObject *parent) : QAbstractTableModel(parent), feed(f) {}
   int rowCount(const QModelIndex &p = {}) const override { return p.isValid() ? 0:static_cast<int>(entries.size()); }
-  int columnCount(const QModelIndex &p = {}) const override { return p.isValid() ? 0:3; }
+  int columnCount(const QModelIndex &p = {}) const override { return p.isValid() ? 0:4; }
   QVariant headerData(int section, Qt::Orientation orientation, int role) const override {
     if(orientation!=Qt::Horizontal || role!=Qt::DisplayRole)return {};
-    const char *headers[] = {"On", "Mapping / state", "Target value"};
-    return section>=0 && section<3 ? QVariant(headers[section]):QVariant{};
+    const char *headers[] = {"On", "Mapping / state", "Target value", "Play"};
+    return section>=0 && section<4 ? QVariant(headers[section]):QVariant{};
   }
   QVariant data(const QModelIndex &idx, int role) const override {
     if(!idx.isValid() || idx.row()>=rowCount())return {};
     const auto &r=entries[static_cast<size_t>(idx.row())].row;
     if(role==Qt::CheckStateRole && idx.column()==0)return r.enabled ? Qt::Checked:Qt::Unchecked;
+    if((role==Qt::ToolTipRole || role==Qt::AccessibleTextRole) && idx.column()==3)
+      return r.one_shot ? QVariant("Play / retrigger one shot"):QVariant("Continuous mode: use the eye or Restart cycle");
     if(role==Qt::ToolTipRole || role==Qt::AccessibleTextRole) {
       return text(r.source)+" → "+text(r.target)+" → "+text(r.property)+"\n"+text(r.name)+" · "+
         monitor_wave_name(r.waveform)+"\n"+monitor_state_name(r.state)+"\n"+text(r.reason)+
         "\nTarget value: "+(r.available ? number(r.value,r.integer):QString("Unavailable"))+
-        " · Range: "+number(r.low,r.integer)+" to "+number(r.high,r.integer);
+        " · Range: "+number(r.low,r.integer)+" to "+number(r.high,r.integer)+"\n"+timing(r);
     }
     if(role==Qt::DisplayRole) {
       if(idx.column()==1)return text(r.source)+" / "+text(r.name)+" · "+monitor_state_name(r.state);
+      if(idx.column()==3)return r.one_shot ? QVariant("Play"):QVariant{};
       if(idx.column()==2)return r.available ? number(r.value,r.integer):QString("Unavailable");
     }
     return {};
@@ -78,9 +91,11 @@ public:
     return result;
   }
   bool setData(const QModelIndex &idx, const QVariant &value, int role) override {
-    if(!writable || role!=Qt::CheckStateRole || !idx.isValid() || idx.column()!=0 || idx.row()>=rowCount())return false;
-    const auto id=entries[static_cast<size_t>(idx.row())].row.id;
-    if(!feed.set_enabled(id,value.toInt()==Qt::Checked))return false;
+    if(!writable || !idx.isValid() || idx.row()>=rowCount())return false;
+    const auto row=entries[static_cast<size_t>(idx.row())].row;
+    if(idx.column()==3 && role==Qt::EditRole) {
+      if(!row.one_shot || !row.available || !feed.play(row.id))return false;
+    } else if(idx.column()!=0 || role!=Qt::CheckStateRole || !feed.set_enabled(row.id,value.toInt()==Qt::Checked))return false;
     if(changed)changed();
     return true;
   }
@@ -105,7 +120,8 @@ public:
         const auto &a=e.row;const auto &b=rows[i];
         enabled=a.enabled!=b.enabled;
         mapping=a.source!=b.source || a.name!=b.name || a.target!=b.target || a.property!=b.property ||
-          a.reason!=b.reason || a.state!=b.state || a.waveform!=b.waveform;
+          a.reason!=b.reason || a.state!=b.state || a.waveform!=b.waveform || a.one_shot!=b.one_shot ||
+          a.timed!=b.timed || a.progress!=b.progress || a.phase_remaining!=b.phase_remaining || a.total_remaining!=b.total_remaining;
         if(e.row.target!=rows[i].target || e.row.property!=rows[i].property || e.row.integer!=rows[i].integer)
           e.history.clear();
         e.row=std::move(rows[i]);
@@ -119,7 +135,7 @@ public:
         // Animation changes only the value/history cell. Leave static labels,
         // checkboxes and headers out of the regular repaint damage region.
         if(dirty)emit dataChanged(index(row,2),index(row,2));
-        if(mapping)emit dataChanged(index(row,1),index(row,1));
+        if(mapping){emit dataChanged(index(row,1),index(row,1));emit dataChanged(index(row,3),index(row,3));}
         if(enabled)emit dataChanged(index(row,0),index(row,0));
       }
     }
@@ -130,6 +146,16 @@ namespace {
 class MonitorDelegate final : public QStyledItemDelegate {
 public:
   explicit MonitorDelegate(QObject *parent) : QStyledItemDelegate(parent) {}
+  bool editorEvent(QEvent *event,QAbstractItemModel *model,const QStyleOptionViewItem &o,const QModelIndex &idx) override {
+    if(idx.column()==3) {
+      const bool mouse=event->type()==QEvent::MouseButtonRelease &&
+        static_cast<QMouseEvent *>(event)->button()==Qt::LeftButton;
+      const bool key=event->type()==QEvent::KeyPress &&
+        (static_cast<QKeyEvent *>(event)->key()==Qt::Key_Space || static_cast<QKeyEvent *>(event)->key()==Qt::Key_Return);
+      return (mouse || key) && model->setData(idx,true,Qt::EditRole);
+    }
+    return QStyledItemDelegate::editorEvent(event,model,o,idx);
+  }
   void paint(QPainter *p, const QStyleOptionViewItem &o, const QModelIndex &idx) const override {
 #ifdef MODULATOR_TESTING
     ++static_cast<const MonitorModel *>(idx.model())->paints;
@@ -137,6 +163,16 @@ public:
     if(idx.column()==0){QStyledItemDelegate::paint(p,o,idx);return;}
     const auto *m=static_cast<const MonitorModel *>(idx.model());
     const auto &e=m->entries[static_cast<size_t>(idx.row())];const auto &r=e.row;
+    if(idx.column()==3) {
+      if(r.one_shot) {
+        QStyleOptionButton button;button.rect=o.rect.adjusted(4,20,-4,-20);button.text="Play";
+        button.state=QStyle::State_Raised;
+        if(r.available && m->writable)button.state|=QStyle::State_Enabled;
+        if(o.state&QStyle::State_HasFocus)button.state|=QStyle::State_HasFocus;
+        QApplication::style()->drawControl(QStyle::CE_PushButton,&button,p);
+      }
+      return;
+    }
     p->save();p->setClipRect(o.rect);
     const bool selected=o.state&QStyle::State_Selected;
     p->fillRect(o.rect,selected ? o.palette.highlight():o.palette.base());
@@ -153,6 +189,11 @@ public:
       p->setPen(ink);
       const QString state=QString(monitor_state_name(r.state))+" · "+monitor_wave_name(r.waveform);
       p->drawText(area.x(),area.y()+43,area.width(),18,Qt::AlignVCenter,o.fontMetrics.elidedText(state,Qt::ElideRight,area.width()));
+      if(r.timed) {
+        p->setPen(faint);p->drawText(area.x(),area.y()+61,area.width(),17,Qt::AlignVCenter,
+          o.fontMetrics.elidedText(timing(r),Qt::ElideRight,area.width()));
+        p->fillRect(QRectF(area.x(),area.bottom()-2,area.width()*r.progress,2),accent);
+      }
     } else {
       p->drawText(area.x(),area.y(),area.width(),18,Qt::AlignVCenter,r.available ? number(r.value,r.integer):QString("Unavailable"));
       const bool bounds=std::isfinite(r.low) && std::isfinite(r.high) && r.low<=r.high;
@@ -208,10 +249,11 @@ void MonitorPanel::build()
   table=new QTableView(this);table->setModel(model);table->setItemDelegate(new MonitorDelegate(table));
   table->setSelectionBehavior(QAbstractItemView::SelectRows);table->setSelectionMode(QAbstractItemView::SingleSelection);
   table->setEditTriggers(QAbstractItemView::NoEditTriggers);table->setShowGrid(false);
-  table->verticalHeader()->hide();table->verticalHeader()->setDefaultSectionSize(72);
+  table->verticalHeader()->hide();table->verticalHeader()->setDefaultSectionSize(94);
   table->horizontalHeader()->setSectionResizeMode(0,QHeaderView::Fixed);table->setColumnWidth(0,32);
   table->horizontalHeader()->setSectionResizeMode(1,QHeaderView::Stretch);
   table->horizontalHeader()->setSectionResizeMode(2,QHeaderView::Fixed);table->setColumnWidth(2,145);
+  table->horizontalHeader()->setSectionResizeMode(3,QHeaderView::Fixed);table->setColumnWidth(3,62);
   layout->addWidget(table);
   auto *help=new QLabel("Target settings · Off may still ease out · History covers the last 10 seconds",this);
   help->setWordWrap(true);layout->addWidget(help);

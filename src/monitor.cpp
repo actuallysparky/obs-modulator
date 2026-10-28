@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Sparky and OBS Modulator contributors
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "monitor.hpp"
+#include "lfo.hpp"
 namespace modulator {
 const char *monitor_state_name(MonitorState s)
 {
@@ -13,12 +14,13 @@ const char *monitor_state_name(MonitorState s)
   case MonitorState::EasingOut: return "Easing out";
   case MonitorState::Paused: return "Paused by external edit";
   case MonitorState::Error: return "Needs attention";
+  case MonitorState::Completed: return "Completed";
+  case MonitorState::Cancelled: return "Cancelled / holding";
   }
   return "Unavailable";
 }
 const char *monitor_wave_name(int wave)
 {
-  const char *names[] = {"Sine", "Triangle", "Rising saw", "Falling saw", "Square", "Glider"};
-  return wave >= 0 && wave < 6 ? names[wave] : "Unknown waveform";
+  return wave_name(wave);
 }
 }

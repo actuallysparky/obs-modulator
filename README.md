@@ -4,9 +4,9 @@ I made this to bring risk and excitement to your streams in the form of LFO cont
 
 ## Preview builds
 
-[Preview Alpha 0.2.0](https://github.com/actuallysparky/obs-modulator/releases/tag/v0.2.0-alpha.1) adds the **Modulator Monitor** dock: live values, range markers, short histories, activity states and eye toggles for your mappings, all at paw's reach mid-stream. Ease in / out and Glider are included too. Download the package for your OBS installation below; [Preview Alpha 0.1.2](https://github.com/actuallysparky/obs-modulator/releases/tag/v0.1.2-alpha.1) remains available for rollback.
+[Preview Alpha 0.3.1](https://github.com/actuallysparky/obs-modulator/releases/tag/v0.3.1-alpha.1) brings **one-shots**. Fire an effect once, then leave it where it lands or let it come home. Ease in and Ease out now get their own checkboxes, six new curves have joined the party, and the monitor has Play buttons and time remaining so you don't have to count Mississippis. Controls that drive other values now play along properly too. [Preview Alpha 0.2.0](https://github.com/actuallysparky/obs-modulator/releases/tag/v0.2.0-alpha.1) remains available for rollback.
 
-These preview builds target OBS 32.2.2. The Mac bundle contains Apple Silicon and Intel slices. The Linux archive targets native Ubuntu/Kubuntu 24.04 x86-64 OBS; it is not a Flatpak package. Check the accompanying candidate report for the architectures and runtime tests actually completed. A separate x86-64 Flatpak extension recipe is included below. Windows builds remain a separate work item.
+These preview builds target OBS 32.2.2. The Mac bundle contains Apple Silicon and Intel slices. The Linux archive targets native Ubuntu/Kubuntu 24.04 x86-64 OBS; it is not a Flatpak package. Check the accompanying candidate report for the architectures and runtime tests actually completed. The separate x86-64 Flatpak bundle targets OBS 32.2.2 on Freedesktop runtime 25.08; it does not target OBS 33/runtime 26.08. A build recipe is included below. Windows builds remain a separate work item.
 
 ## Install or update
 
@@ -21,29 +21,33 @@ Reopen OBS. Verify the current log reports `[obs-modulator] Loaded` with the ver
 
 1. Add **LFO Modulator** to a video source. New mappings start with their gaze averted.
 2. Choose the target source, optional target filter, and a numeric property. This initializes both range endpoints to the property's current value.
-3. Set different minimum/maximum values, choose Sine, Triangle, Rising saw, Falling saw, Square or Glider, and set a full-cycle time (four seconds by default).
-4. Enable the eye, feel it pierce your soul. Modulation runs while the parent source is showing, including previews. Disabling or hiding holds the current value when easing is unchecked; with easing checked, it returns to the activation value over one cycle. Reactivation starts a fresh cycle.
+3. Set different minimum/maximum values, choose a waveform, and set a full-cycle time (four seconds by default). Sine, Triangle, Rising saw, Falling saw, Square and Glider are still here. The new Exponential, Logarithmic and S curves can all rise or fall, depending on what you’re up to.
+4. Enable the eye, feel it pierce your soul. Modulation runs while the parent source is showing, including previews. Disabling or hiding holds the current value when **Ease out** is unchecked; when checked, it returns to the activation value over one cycle. Reactivation starts a fresh continuous cycle. For a single performance, check **One shot**, then press **Play / retrigger** in the properties or **Play** in the dock. It runs once and switches its eye off when it’s done.
 5. Move the target manually. The LFO should stop, preserve your value, turn its eye off and explain why. Re-enable to restart; **Restore starting value and disable** returns to the value captured on activation.
 
-**Ease in / out** (0.1.2) gently blends from the target's real current value into the moving LFO over one cycle time. On stop, it gently returns from the last output to that activation value over another cycle, even with the eye off or source hidden. It starts unchecked: start is immediate and stop immediately holds the current value. Enable it before turning the eye on to let a static effect gradually come to life. Re-enabling or returning from hidden during a fade starts fresh from the current value. Restart cycle fades in again while preserving the activation value. Manual target edits cancel either transition immediately; Restore starting value cancels the fade and returns immediately.
+**Ease in** gives a static effect a gentle way to get moving. It blends from the target’s actual value into the waveform during its first cycle, so you don't sit through an extra cycle waiting for the fun to start. Leave it unchecked for an immediate start.
 
-**Glider** (0.1.2) smoothly travels between random destinations inside the min/max range, easing into and out of each destination. Cycle time is the travel time between destinations, not a repeating loop. Each filter has its own sequence; restarting retraces it. Try longer times for slow organic movement. Integer targets still move in whole steps. During Ease In, a starting value outside the LFO range travels gradually into it rather than snapping to a range endpoint.
+**Ease out** lets the effect settle back where it started over one additional cycle. Leave it unchecked to stop right there and hold the current value. It can keep returning while the eye is off or the source is hidden. Home is the value when you pressed Play: for 0 → 100 → 0, start the target at 0 and check Ease out. Starting at 100 means it comes back to 100.
+
+The checkboxes are independent. Older mappings with the combined option checked migrate to both checked. Manual target edits cancel either transition immediately; **Restore starting value and disable** cancels playback and returns immediately.
+
+**Glider** takes long, smooth walks between random destinations inside the min/max range. Cycle time is one leg of that journey, not a round trip. Each continuous filter has its own sequence; restarting retraces it. Give it longer times for slow organic movement. Integer targets still move in whole steps. As a one-shot, it picks one fresh destination and stays there, unless Ease out brings it home. Ease in isn't needed for that journey.
 
 Duplicate the LFO filter for more controls. One active LFO owns each target/property. Transforms, mixer volume and application settings are outside this version.
 
 ## Live monitor dock
 
-Open **Docks → Modulator Monitor** to see all mappings, current target values, range markers, short histories and activity states. Its checkbox is the existing filter eye; **Off** can still show **Easing out**, and an enabled mapping with a hidden parent can show **Waiting**. The value is the target setting read back from OBS, not shader-internal smoothing.
+Open **Docks → Modulator Monitor** to see all mappings, current target values, range markers, short histories, activity states, phase progress and time remaining. One-shots have Play buttons and total shot time remaining. Its checkbox is the existing filter eye; **Off** can still show **Easing out**, and an enabled mapping with a hidden parent can show **Waiting**. The value is the target setting read back from OBS, not shader-internal smoothing.
 
 The dock refreshes only while visible. Closing it, hiding its tab or minimizing stops its timer, reads, history and paints; modulation itself continues with its existing rules. Reopening starts a fresh history. It starts closed: open it when you want a look, and dock or float it wherever it fits.
 
 ## Limits
 
-Some target widgets do not redraw continuously; check the rendered effect and reopen the target dialog to inspect settings. Same-value or transient outside writes cannot reliably be detected. A stale dialog can submit an old target value and pause the LFO. Preview/shared-source visibility can keep it running, and saving a collection can save the instantaneous target value. Target plugins may perform expensive work or change shader randomness on update. Short cycles can alias at the video frame rate.
+Some target widgets do not redraw continuously; check the rendered effect and reopen the target dialog to inspect settings. Some controls move several other settings along with them. Modulator watches the related numbers and switches it observes changing, so you can grab those back too. If two mappings want the same value, the one already running keeps it. Same-value or transient outside writes and nonnumeric callback side effects cannot reliably be detected. A stale dialog can submit an old target value and pause the LFO. Preview/shared-source visibility can keep it running, and saving a collection can save the instantaneous target value. Target plugins may perform expensive work or change shader randomness on update. Short cycles can alias at the video frame rate.
 
 ## Remove or roll back
 
-Quit idle OBS, move only `obs-modulator.plugin` (Mac) or `obs-modulator` (Linux) out of the active plugin directory, then reopen. To roll back, replace it with your retained previous version while OBS is closed. Keep scene backups and avoid saving away missing-plugin settings before restoring the plugin. Do not overwrite your whole OBS profile or unrelated plugins. Removing the LFO leaves target settings at their last value.
+Quit idle OBS, move only `obs-modulator.plugin` (Mac) or `obs-modulator` (Linux) out of the active plugin directory, then reopen. To roll back, replace it with your retained previous version while OBS is closed and restore the pre-upgrade test collection if it uses one-shots, independent easing or the new curves. Older versions may ignore those choices or reject unsupported waves. Keep scene backups and avoid saving away missing-plugin settings before restoring the plugin. Do not overwrite your whole OBS profile or unrelated plugins. Removing the LFO leaves target settings at their last value.
 
 ## Feedback
 
@@ -57,19 +61,19 @@ For Mac, supply a universal libobs SDK through `MODULATOR_SDK`, plus `MODULATOR_
 
 ## Flatpak (Linux x86-64)
 
-The extension is `com.obsproject.Studio.Plugin.Modulator`, branch `stable`, for Flathub OBS (`com.obsproject.Studio`). It builds against OBS inside the sandbox using Freedesktop SDK 25.08, matching OBS 32.2.2's Flatpak runtime. This is a local preview extension, not a Flathub listing. A native Linux plugin archive is a different package.
+The extension is `com.obsproject.Studio.Plugin.Modulator`, branch `stable`, for Flathub OBS (`com.obsproject.Studio`) 32.2.2. It builds against OBS inside the sandbox using Freedesktop SDK 25.08, matching OBS 32.2.2's Flatpak runtime. This is a local preview extension, not a Flathub listing. A native Linux plugin archive is a different package.
 
-On Linux x86-64, install `flatpak` and `flatpak-builder` using your distribution's package manager. From a source checkout, or the extracted corresponding-source archive, run:
+On Linux x86-64, install `flatpak` and `flatpak-builder` using your distribution's package manager. These instructions require a matching OBS 32.2.2 user installation. Check its runtime before building; current Flathub `stable` may already be OBS 33, which needs a separately qualified build. From a source checkout, or the extracted corresponding-source archive, run:
 
 ```sh
 flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-flatpak install --user flathub com.obsproject.Studio//stable org.freedesktop.Sdk//25.08
 flatpak info --user --show-runtime com.obsproject.Studio
+flatpak install --user flathub org.freedesktop.Sdk//25.08
 flatpak-builder --user --arch=x86_64 --repo=flatpak-repo build-flatpak packaging/flatpak/com.obsproject.Studio.Plugin.Modulator.json
 flatpak build-bundle --runtime --arch=x86_64 flatpak-repo obs-modulator-flatpak-x86_64.flatpak com.obsproject.Studio.Plugin.Modulator stable
 ```
 
-Check that the reported OBS runtime is `org.freedesktop.Platform/x86_64/25.08`; if it has changed, the SDK selection needs review before building. The builder runs the core tests. The recipe installs the module and locales under the OBS plugin extension paths; no host libobs SDK is needed. Downloads of OBS and its SDK can be several gigabytes. For a fresh rebuild, use a new build directory or the builder's `--force-clean` option on that disposable build directory.
+Check that the reported OBS runtime is `org.freedesktop.Platform/x86_64/25.08`; stop if it differs. This bundle is not qualified for OBS 33/runtime 26.08. Keep your working OBS version; a matching newer build needs its own validation. The builder runs the core tests. The recipe installs the module and locales under the OBS plugin extension paths; no host libobs SDK is needed. Downloads of OBS and its SDK can be several gigabytes. For a fresh rebuild, use a new build directory or the builder's `--force-clean` option on that disposable build directory.
 
 Quit idle Flatpak OBS and back up its test collection before installation. Install your built bundle, or the matching CI `.flatpak` preview bundle, using:
 

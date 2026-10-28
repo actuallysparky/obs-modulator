@@ -8,6 +8,10 @@
 #include <QTableView>
 #include <QThread>
 #include <QSignalBlocker>
+#include <QKeyEvent>
+#include <QMouseEvent>
+#include <QAbstractItemDelegate>
+#include <QStyleOptionViewItem>
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
@@ -15,7 +19,7 @@
 
 static int checks=0;
 #define CHECK(x) do {++checks;if(!(x)){std::fprintf(stderr,"FAIL %d: %s\n",__LINE__,#x);std::exit(1);}}while(0)
-struct Counters { int samples=0, clears=0, toggles=0; };
+struct Counters { int samples=0, clears=0, toggles=0, plays=0; };
 class Fixture final : public modulator::MonitorFeed {
 public:
   std::shared_ptr<Counters> counts=std::make_shared<Counters>();
@@ -25,6 +29,9 @@ public:
     ++counts->samples;
     if(on_sample){auto action=std::move(on_sample);on_sample={};action();}
     return rows;
+  }
+  bool play(const std::string &id) override {
+    for(auto &r:rows)if(r.id==id && r.one_shot){++counts->plays;return true;}return false;
   }
   void clear() override {++counts->clears;}
   bool set_enabled(const std::string &id,bool enabled) override {
@@ -61,12 +68,17 @@ int main(int argc,char **argv) {
       panel->monitoring(),panel->isVisible(),dock->isVisible(),main.isVisible(),panel->view()!=nullptr,counts->samples,
       static_cast<unsigned long long>(panel->timer_callbacks),static_cast<unsigned long long>(panel->history_appends));
   CHECK(panel->monitoring() && counts->samples>=2);CHECK(panel->history_appends>=2);
-  auto *model=panel->view()->model();CHECK(model->rowCount()==1);CHECK(model->columnCount()==3);
+  auto *model=panel->view()->model();CHECK(model->rowCount()==1);CHECK(model->columnCount()==4);
   CHECK(model->data(model->index(0,2),Qt::DisplayRole).toString()=="0.17");
   CHECK(model->setData(model->index(0,0),Qt::Unchecked,Qt::CheckStateRole));CHECK(counts->toggles==1 && !fixture->rows[0].enabled);
   fixture->rows[0].state=modulator::MonitorState::EasingOut;fixture->rows[0].value=.19;run(100);
   CHECK(model->data(model->index(0,1),Qt::DisplayRole).toString().contains("Easing out"));
   CHECK(model->data(model->index(0,0),Qt::CheckStateRole).toInt()==Qt::Unchecked);
+  fixture->rows[0].one_shot=true;fixture->rows[0].timed=true;
+  fixture->rows[0].phase_remaining=1.2;fixture->rows[0].total_remaining=5.2;
+  run(100);CHECK(model->data(model->index(0,3),Qt::DisplayRole).toString()=="Play");
+  CHECK(model->data(model->index(0,1),Qt::ToolTipRole).toString().contains("Shot left: 5.2s"));
+  CHECK(model->setData(model->index(0,3),true,Qt::EditRole));CHECK(counts->plays==1);
   {QSignalBlocker block(dock);dock->hide();}
   run(40);const int stopped=counts->samples;const auto history=panel->history_appends;
   const auto stopped_ticks=panel->timer_callbacks;
@@ -102,6 +114,25 @@ int main(int argc,char **argv) {
   }
   CHECK(panel->test_paints()>before_paints);
   std::sort(paint.begin(),paint.end());std::printf("32-row live snapshot/model/incremental-paint median/p95 %.3f/%.3f ms\n",paint[50],paint[95]);
+  // Render real playback feedback and exercise keyboard activation of Play.
+  auto &shot=fixture->rows[0];shot.one_shot=true;shot.timed=true;
+  shot.phase_remaining=1.2;shot.total_remaining=1.2;shot.progress=.7;
+  fixture->rows[1].one_shot=true;fixture->rows[1].timed=true;
+  fixture->rows[1].state=modulator::MonitorState::EasingOut;
+  fixture->rows[1].phase_remaining=2.4;fixture->rows[1].total_remaining=2.4;fixture->rows[1].progress=.4;
+  fixture->rows[2].one_shot=true;fixture->rows[2].state=modulator::MonitorState::Completed;
+  fixture->rows[2].enabled=false;panel->test_refresh();QCoreApplication::processEvents();
+  const int before_play=counts->plays;QKeyEvent key(QEvent::KeyPress,Qt::Key_Space,Qt::NoModifier);
+  panel->view()->setCurrentIndex(model->index(0,3));QApplication::sendEvent(panel->view(),&key);
+  CHECK(counts->plays==before_play+1);
+  const QPoint point=panel->view()->visualRect(model->index(0,3)).center();
+  const QPoint global=panel->view()->viewport()->mapToGlobal(point);
+  QMouseEvent press(QEvent::MouseButtonPress,point,global,Qt::LeftButton,Qt::LeftButton,Qt::NoModifier);
+  QMouseEvent release(QEvent::MouseButtonRelease,point,global,Qt::LeftButton,Qt::NoButton,Qt::NoModifier);
+  QApplication::sendEvent(panel->view()->viewport(),&press);QApplication::sendEvent(panel->view()->viewport(),&release);
+  CHECK(counts->plays==before_play+2);
+  QStyleOptionViewItem option;CHECK(panel->view()->itemDelegate()->editorEvent(&key,model,option,model->index(0,3)));
+  CHECK(counts->plays==before_play+3);
   QImage image(panel->size(),QImage::Format_ARGB32_Premultiplied);panel->render(&image);
   if(argc>1)CHECK(image.save(QString::fromLocal8Bit(argv[1])));
   dock->hide();const int final=counts->samples;delete dock;run(160);CHECK(counts->samples==final);
