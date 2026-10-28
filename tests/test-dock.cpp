@@ -31,7 +31,10 @@ public:
     return rows;
   }
   bool play(const std::string &id) override {
-    for(auto &r:rows)if(r.id==id && r.one_shot){++counts->plays;return true;}return false;
+    for(auto &r:rows) {
+      if(r.id==id && r.one_shot){++counts->plays;return true;}
+    }
+    return false;
   }
   void clear() override {++counts->clears;}
   bool set_enabled(const std::string &id,bool enabled) override {
