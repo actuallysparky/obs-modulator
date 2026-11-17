@@ -35,6 +35,10 @@ QString timing(const MonitorRow &r) {
   if(r.one_shot)result+=QString(" · Shot left: %1s").arg(r.total_remaining,0,'f',1);
   return result;
 }
+QString mapping_state(const MonitorRow &row) {
+  const QString state = monitor_state_name(row.state);
+  return row.feedback_loop ? QString("Feedback loop · ") + state : state;
+}
 QString number(double v, bool integer) { return QString::number(v, integer ? 'f':'g', integer ? 0:5); }
 struct Entry {
   MonitorRow row;
@@ -44,7 +48,7 @@ bool same(const MonitorRow &a, const MonitorRow &b) {
   return a.id==b.id && a.source==b.source && a.name==b.name && a.target==b.target &&
     a.property==b.property && a.reason==b.reason && a.state==b.state && a.enabled==b.enabled &&
     a.available==b.available && a.integer==b.integer && a.value==b.value && a.low==b.low &&
-    a.high==b.high && a.waveform==b.waveform && a.one_shot==b.one_shot && a.timed==b.timed &&
+    a.high==b.high && a.waveform==b.waveform && a.one_shot==b.one_shot && a.timed==b.timed && a.feedback_loop==b.feedback_loop &&
     a.progress==b.progress && a.phase_remaining==b.phase_remaining && a.total_remaining==b.total_remaining;
 }
 }
@@ -74,12 +78,12 @@ public:
       return r.one_shot ? QVariant("Play / retrigger one shot"):QVariant("Continuous mode: use the eye or Restart cycle");
     if(role==Qt::ToolTipRole || role==Qt::AccessibleTextRole) {
       return text(r.source)+" → "+text(r.target)+" → "+text(r.property)+"\n"+text(r.name)+" · "+
-        monitor_wave_name(r.waveform)+"\n"+monitor_state_name(r.state)+"\n"+text(r.reason)+
+        monitor_wave_name(r.waveform)+"\n"+mapping_state(r)+"\n"+text(r.reason)+
         "\nTarget value: "+(r.available ? number(r.value,r.integer):QString("Unavailable"))+
         " · Range: "+number(r.low,r.integer)+" to "+number(r.high,r.integer)+"\n"+timing(r);
     }
     if(role==Qt::DisplayRole) {
-      if(idx.column()==1)return text(r.source)+" / "+text(r.name)+" · "+monitor_state_name(r.state);
+      if(idx.column()==1)return text(r.source)+" / "+text(r.name)+" · "+mapping_state(r);
       if(idx.column()==3)return r.one_shot ? QVariant("Play"):QVariant{};
       if(idx.column()==2)return r.available ? number(r.value,r.integer):QString("Unavailable");
     }
@@ -121,7 +125,7 @@ public:
         enabled=a.enabled!=b.enabled;
         mapping=a.source!=b.source || a.name!=b.name || a.target!=b.target || a.property!=b.property ||
           a.reason!=b.reason || a.state!=b.state || a.waveform!=b.waveform || a.one_shot!=b.one_shot ||
-          a.timed!=b.timed || a.progress!=b.progress || a.phase_remaining!=b.phase_remaining || a.total_remaining!=b.total_remaining;
+          a.timed!=b.timed || a.feedback_loop!=b.feedback_loop || a.progress!=b.progress || a.phase_remaining!=b.phase_remaining || a.total_remaining!=b.total_remaining;
         if(e.row.target!=rows[i].target || e.row.property!=rows[i].property || e.row.integer!=rows[i].integer)
           e.history.clear();
         e.row=std::move(rows[i]);
@@ -187,7 +191,7 @@ public:
       const QString route=text(r.source)+" → "+text(r.target)+" / "+text(r.property);
       p->drawText(area.x(),area.y()+21,area.width(),18,Qt::AlignVCenter,o.fontMetrics.elidedText(route,Qt::ElideMiddle,area.width()));
       p->setPen(ink);
-      const QString state=QString(monitor_state_name(r.state))+" · "+monitor_wave_name(r.waveform);
+      const QString state=mapping_state(r)+" · "+monitor_wave_name(r.waveform);
       p->drawText(area.x(),area.y()+43,area.width(),18,Qt::AlignVCenter,o.fontMetrics.elidedText(state,Qt::ElideRight,area.width()));
       if(r.timed) {
         p->setPen(faint);p->drawText(area.x(),area.y()+61,area.width(),17,Qt::AlignVCenter,

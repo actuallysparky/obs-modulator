@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Sparky and OBS Modulator contributors
 # SPDX-License-Identifier: GPL-2.0-or-later
 cmake_minimum_required(VERSION 3.24)
-project(obs-modulator VERSION 0.3.1 LANGUAGES CXX)
+project(obs-modulator VERSION 0.4.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 option(BUILD_OBS_PLUGIN "Build the native OBS plugin" ON)
@@ -19,7 +19,8 @@ set(MODULATOR_MAC_RPATH "" CACHE PATH "OBS framework directory for local test ex
 include(CTest)
 function(modulator_warnings target)
   if(MSVC)
-    target_compile_options(${target} PRIVATE /W4 /WX /utf-8)
+    target_compile_options(${target} PRIVATE /W4 /WX /utf-8 /Zc:__cplusplus)
+    target_compile_definitions(${target} PRIVATE NOMINMAX)
   else()
     target_compile_options(${target} PRIVATE -Wall -Wextra -Werror)
   endif()

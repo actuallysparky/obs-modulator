@@ -13,7 +13,7 @@ struct MonitorRow {
   bool enabled = false, available = false, integer = false;
   double value = 0, low = 0, high = 0;
   int waveform = 0;
-  bool one_shot = false, timed = false;
+  bool one_shot = false, timed = false, feedback_loop = false;
   double progress = 0, phase_remaining = 0, total_remaining = 0;
 };
 // UI-thread, pull-only interface. No observer or sampling work is installed in

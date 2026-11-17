@@ -369,6 +369,162 @@ int main(int argc,char **argv) {
   callback_shot();callback_action=5;at(shot_clock+.5);callback_action=0;
   CHECK(obs_source_removed(callback_target) && !obs_source_enabled(lfo));remove(lfo);
   callback_controller=nullptr;obs_source_release(callback_target);callback_target=nullptr;callback_fixture=false;
+  auto row_for = [&](obs_source_t *controller) {
+    const auto snapshot = feed->sample();
+    const std::string uuid = obs_source_get_uuid(controller);
+    const auto it = std::find_if(snapshot.begin(), snapshot.end(),
+      [&](const auto &row) { return row.id == uuid; });
+    CHECK(it != snapshot.end());
+    return *it;
+  };
+  auto map_parameter = [](obs_source_t *driver, obs_source_t *target, const char *key,
+                          double minimum, double maximum) {
+    auto *cfg = obs_data_create();
+    obs_data_set_string(cfg, "filter_uuid", obs_source_get_uuid(target));
+    obs_data_set_string(cfg, "property", key);
+    obs_data_set_int(cfg, "property_type", 2);
+    obs_data_set_int(cfg, "waveform", 2); // rising saw
+    obs_data_set_double(cfg, "minimum", minimum);
+    obs_data_set_double(cfg, "maximum", maximum);
+    obs_source_update(driver, cfg);
+    obs_data_release(cfg);
+  };
+  auto acknowledge = [](obs_source_t *controller, bool expected_warning) {
+    auto *props = obs_source_properties(controller);
+    auto *allow = obs_properties_get(props, "allow_feedback");
+    CHECK(obs_property_visible(allow) == expected_warning);
+    if (expected_warning) {
+      auto *cfg = obs_source_get_settings(controller);
+      obs_data_set_bool(cfg, "allow_feedback", true);
+      CHECK(obs_property_modified(allow, cfg));
+      CHECK(!obs_property_visible(allow));
+      CHECK(!obs_data_get_bool(cfg, "allow_feedback"));
+      CHECK(*obs_data_get_string(cfg, "feedback_consent"));
+      obs_source_update(controller, cfg);
+      obs_data_release(cfg);
+    }
+    obs_properties_destroy(props);
+  };
+  // A speed change affects the next interval without resetting phase or
+  // cancelling the receiver's shot. The configured period stays savable.
+  auto *receiver = fresh(2, false, false);
+  auto *driver = controller(source);
+  obs_source_set_enabled(driver, false);
+  map_parameter(driver, receiver, "period", 2, 2);
+  const double start = shot_clock + 200;
+  CHECK(feed->play(obs_source_get_uuid(receiver)));
+  obs_source_set_enabled(driver, true);
+  at(start);
+  CHECK(row_for(driver).value == 2);
+  at(start + 1);
+  CHECK(std::abs(row_for(receiver).progress - .25) < 1e-12);
+  CHECK(std::abs(row_for(receiver).value - .35) < 1e-12);
+  at(start + 2);
+  CHECK(std::abs(row_for(receiver).progress - .75) < 1e-12);
+  CHECK(std::abs(row_for(receiver).value - .65) < 1e-12);
+  at(start + 2.5);
+  CHECK(row_for(receiver).state == MonitorState::Completed && row_for(receiver).value == .8);
+  auto *saved = obs_source_get_settings(receiver);
+  CHECK(obs_data_get_double(saved, "period") == 4);
+  obs_data_release(saved);
+  obs_source_set_enabled(driver, false);
+  at(start + 3);
+  CHECK(row_for(driver).value == 2);
+  obs_source_set_enabled(driver, true);
+  at(start + 4);
+  change(receiver, "period", 2); // edit to the already animated value
+  at(start + 5);
+  CHECK(row_for(driver).state == MonitorState::Paused && !obs_source_enabled(driver));
+  remove(driver);
+  remove(receiver);
+
+  // Drive the minimum past the maximum. Output stays in the ordered,
+  // bounded effective range without changing the saved endpoints.
+  receiver = controller(source);
+  driver = controller(source);
+  change(receiver, "minimum", .2);
+  change(receiver, "maximum", .4);
+  auto *receiver_cfg = obs_source_get_settings(receiver);
+  obs_data_set_int(receiver_cfg, "waveform", 2);
+  obs_source_update(receiver, receiver_cfg);
+  obs_data_release(receiver_cfg);
+  map_parameter(driver, receiver, "minimum", .9, .9);
+  obs_source_set_enabled(receiver, true);
+  obs_source_set_enabled(driver, true);
+  at(start + 6);
+  at(start + 8);
+  CHECK(std::abs(row_for(receiver).value - .65) < 1e-12);
+  CHECK(row_for(driver).value == .9 && obs_source_enabled(receiver));
+  auto *restore_props = obs_source_properties(driver);
+  obs_property_button_clicked(obs_properties_get(restore_props, "restore"), driver);
+  obs_properties_destroy(restore_props);
+  at(start + 8.5);
+  CHECK(!obs_source_enabled(driver) && row_for(driver).value == .2);
+  at(start + 9);
+  CHECK(std::abs(row_for(receiver).value - .35) < 1e-12);
+  remove(driver);
+  remove(receiver);
+
+  // Try a cycle through the same acknowledgement callback as the property UI.
+  driver = controller(source);
+  map_parameter(driver, driver, "period", 2, 3);
+  obs_source_set_enabled(driver, true);
+  at(start + 10);
+  CHECK(!obs_source_enabled(driver) && row_for(driver).value == 4);
+  CHECK(row_for(driver).reason.find("needs acknowledgement") != std::string::npos);
+  auto *feedback_props = obs_source_properties(driver);
+  auto *filters = obs_properties_get(feedback_props, "filter_uuid");
+  bool lists_self = false;
+  for (size_t i = 0; i < obs_property_list_item_count(filters); ++i)
+    if (std::string(obs_property_list_item_string(filters, i)) == obs_source_get_uuid(driver)) lists_self = true;
+  CHECK(lists_self);
+  CHECK(obs_property_list_item_count(obs_properties_get(feedback_props, "property")) == 4);
+  obs_properties_destroy(feedback_props);
+  acknowledge(driver, true);
+  obs_source_set_enabled(driver, true);
+  at(start + 11);
+  CHECK(obs_source_enabled(driver) && row_for(driver).value == 2);
+  at(start + 12);
+  CHECK(std::abs(row_for(driver).value - 2.25) < 1e-12);
+  CHECK(row_for(driver).feedback_loop && row_for(driver).reason.find("Feedback loop") != std::string::npos);
+  acknowledge(driver, false);
+  serialized = obs_save_source(driver);
+  remove(driver);
+  driver = obs_load_private_source(serialized);
+  obs_data_release(serialized);
+  CHECK(driver);
+  obs_source_filter_add(source, driver);
+  acknowledge(driver, false);
+  at(start + 13);
+  CHECK(obs_source_enabled(driver) && row_for(driver).value == 2);
+  map_parameter(driver, driver, "maximum", 2, 3);
+  at(start + 14);
+  CHECK(!obs_source_enabled(driver));
+  acknowledge(driver, true);
+  remove(driver);
+
+  // One acknowledgement covers every edge in a loop. Each oscillator sees
+  // the old parameter values even when the other edge sorts earlier.
+  receiver = controller(source);
+  driver = controller(source);
+  map_parameter(driver, receiver, "period", 2, 3);
+  map_parameter(receiver, driver, "period", 2, 3);
+  obs_source_set_enabled(driver, true);
+  obs_source_set_enabled(receiver, true);
+  at(start + 20);
+  CHECK(!obs_source_enabled(driver) && !obs_source_enabled(receiver));
+  acknowledge(receiver, true);
+  acknowledge(driver, false);
+  obs_source_set_enabled(driver, true);
+  obs_source_set_enabled(receiver, true);
+  at(start + 21);
+  CHECK(row_for(driver).value == 2 && row_for(receiver).value == 2);
+  at(start + 22);
+  CHECK(row_for(driver).value == 2.25 && row_for(receiver).value == 2.25);
+  remove(receiver);
+  at(start + 23);
+  CHECK(!obs_source_enabled(driver) && !row_for(driver).available);
+  remove(driver);
   modulator::monitor_test_time(-1);feed.reset();
   obs_source_dec_showing(source);obs_source_release(source);obs_module_unload();obs_shutdown();
   std::printf("%d monitor integration checks passed\n",checks);

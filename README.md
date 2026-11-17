@@ -4,15 +4,21 @@ I made this to bring risk and excitement to your streams in the form of LFO cont
 
 ## Preview builds
 
-[Preview Alpha 0.3.1](https://github.com/actuallysparky/obs-modulator/releases/tag/v0.3.1-alpha.1) brings **one-shots**. Fire an effect once, then leave it where it lands or let it come home. Ease in and Ease out now get their own checkboxes, six new curves have joined the party, and the monitor has Play buttons and time remaining so you don't have to count Mississippis. Controls that drive other values now play along properly too. [Preview Alpha 0.2.0](https://github.com/actuallysparky/obs-modulator/releases/tag/v0.2.0-alpha.1) remains available for rollback.
+Preview Alpha 0.4.0 lets one Modulator drive another’s cycle time, minimum or maximum. A slow Glider can change the speed of a second LFO while it runs. Feedback loops work after acknowledgement. Windows, for dem Mice, gets its first x64 preview. [Preview Alpha 0.3.1](https://github.com/actuallysparky/obs-modulator/releases/tag/v0.3.1-alpha.1) is available for rollback.
 
-These preview builds target OBS 32.2.2. The Mac bundle contains Apple Silicon and Intel slices. The Linux archive targets native Ubuntu/Kubuntu 24.04 x86-64 OBS; it is not a Flatpak package. Check the accompanying candidate report for the architectures and runtime tests actually completed. The separate x86-64 Flatpak bundle targets OBS 32.2.2 on Freedesktop runtime 25.08; it does not target OBS 33/runtime 26.08. A build recipe is included below. Windows builds remain a separate work item.
+| Package | Target |
+| --- | --- |
+| Windows x64 ZIP | Windows 11 x64 with OBS 32.2.2 |
+| Mac universal ZIP | Apple Silicon and Intel with OBS 32.2.2 |
+| Native Linux x64 archive | Ubuntu/Kubuntu 24.04 with native OBS 32.2.2 |
+| Flatpak x64 bundle | OBS 32.2.2 with Freedesktop runtime 25.08 |
 
 ## Install or update
 
 Quit OBS while streaming, recording and virtual camera are inactive. Keep a copy of any previous obs-modulator plugin outside the active plugin folder and back up a test scene collection. DID YOU HEAR ME ABOUT BACKING UP? Bear's aint wanna be responsible for wreck'n yer streams. Extract the archive; keep the complete plugin directory together.
 
 - Mac: place `obs-modulator.plugin` in `~/Library/Application Support/obs-studio/plugins/`. This preview uses an ad-hoc signature, not Developer ID notarization. If macOS blocks it, report the message; signed/notarized distribution remains a release task.
+- Windows: copy the complete `obs-modulator` folder into `%ProgramData%\obs-studio\plugins\`. Keep `bin\64bit\obs-modulator.dll` and `data\locale\` together inside that folder. For portable OBS, copy the DLL to `obs-plugins\64bit\` and copy its data to `data\obs-plugins\obs-modulator\` within your portable OBS directory.
 - Native Linux: place the complete `obs-modulator` directory in `~/.config/obs-studio/plugins/`, or the equivalent OBS configuration directory when `XDG_CONFIG_HOME` is customized. The layout must be `plugins/obs-modulator/bin/64bit/obs-modulator.so` plus `plugins/obs-modulator/data/locale/`.
 
 Reopen OBS. Verify the current log reports `[obs-modulator] Loaded` with the version from the archive manifest, and the source's Add Effect Filter menu contains **LFO Modulator**. Start in an expendable test collection. For Flatpak OBS, use the extension build below instead of the native Linux archive.
@@ -45,9 +51,15 @@ The dock refreshes only while visible. Closing it, hiding its tab or minimizing 
 
 Some target widgets do not redraw continuously; check the rendered effect and reopen the target dialog to inspect settings. Some controls move several other settings along with them. Modulator watches the related numbers and switches it observes changing, so you can grab those back too. If two mappings want the same value, the one already running keeps it. Same-value or transient outside writes and nonnumeric callback side effects cannot reliably be detected. A stale dialog can submit an old target value and pause the LFO. Preview/shared-source visibility can keep it running, and saving a collection can save the instantaneous target value. Target plugins may perform expensive work or change shader randomness on update. Short cycles can alias at the video frame rate.
 
+## Modulate a Modulator
+
+Add two filters to a test source. Point the first at an effect slider, then point the other Modulator at the first filter’s **Cycle time (seconds)**. Try Glider with a 2–8 second target range and a 15-second cycle of its own. Turn on both eyes. The receiving oscillator keeps its phase as its speed changes. **Minimum** and **Maximum** also work as targets.
+
+If you make a feedback loop, select **I understand — allow this feedback loop** in filter properties, then enable its filters. The monitor labels the loop. Consent covers the exact routing, so a different loop prompts again. Each filter reads from the previous engine update. Animated values are live for the session and show in the monitor. The filter dialog and saved scene keep the configured settings. A manual change to the controlled setting pauses the driver. A one-shot still runs one cycle as its speed changes. The return, if enabled, uses the cycle time at the start of the return.
+
 ## Remove or roll back
 
-Quit idle OBS, move only `obs-modulator.plugin` (Mac) or `obs-modulator` (Linux) out of the active plugin directory, then reopen. To roll back, replace it with your retained previous version while OBS is closed and restore the pre-upgrade test collection if it uses one-shots, independent easing or the new curves. Older versions may ignore those choices or reject unsupported waves. Keep scene backups and avoid saving away missing-plugin settings before restoring the plugin. Do not overwrite your whole OBS profile or unrelated plugins. Removing the LFO leaves target settings at their last value.
+Quit idle OBS, move only `obs-modulator.plugin` (Mac) or the `obs-modulator` directory (Windows or native Linux) out of the active plugin directory, then reopen. To roll back, replace it with your retained previous version while OBS is closed and restore the pre-upgrade test collection if it uses one-shots, independent easing or the new curves. Older versions may ignore those choices or reject unsupported waves. Keep scene backups and avoid saving away missing-plugin settings before restoring the plugin. Do not overwrite your whole OBS profile or unrelated plugins. Removing a driver leaves its last target value for the session. Ordinary OBS target settings can also be saved with the scene. If using Windows portable layout, remove only the Modulator DLL and its own data folder.
 
 ## Feedback
 
@@ -58,6 +70,8 @@ Please include the preview version and archive checksum, OS/CPU architecture, ex
 C++17, CMake 3.24+, Ninja, Python 3 and a matching libobs SDK are required. The monitor dock also needs a matching OBS frontend API SDK and Qt 6 Widgets; core-only builds remain Qt-free. Use `MODULATOR_DOCK=OFF` for a filter-only plugin. The Mac CI wrapper downloads the official hash-pinned OBS Qt SDK; it does not bundle Qt with the plugin. Inputs used for these previews are hash-locked in `ci/dependencies.json`. `cmake --preset core`, `cmake --build build-core` and `ctest --test-dir build-core` run the platform-independent core checks. Linux CI installs the pinned official OBS package, configures `linux-x86_64`, and runs synthetic and real Shaderfilter rendering tests under Xvfb/Mesa. Software rendering in CI does not qualify a user's GPU/session.
 
 For Mac, supply a universal libobs SDK through `MODULATOR_SDK`, plus `MODULATOR_OBS_FRAMEWORKS`, `MODULATOR_OBS_GRAPHICS` and `MODULATOR_OBS_DATA`; configure `macos-universal`. `ci/mac-sdk.py` creates an imported target from explicit OBS source headers, a library and SIMDe headers. `MODULATOR_SHADERFILTER` and `MODULATOR_SHADERFILTER_DATA` enable the separate Shaderfilter test. `ci/package.py` packages a CMake installation tree with this guide, file hashes and source provenance.
+
+On Windows, `pwsh -File ci/windows-build.ps1 -Guide README.md` uses Visual Studio 2026 and the upstream OBS x64 preset with pinned dependencies. The CI job builds an OBS SDK, runs the core and Qt dock tests, checks DLL loading in isolated libobs and packages the ZIP. Native OBS testing covers graphics, filter properties and the dock.
 
 ## Flatpak (Linux x86-64)
 

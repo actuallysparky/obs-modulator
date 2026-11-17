@@ -3,11 +3,15 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 """Corresponding-source delivery must preserve source and exclude private state."""
 from pathlib import Path
+import json
+import shutil
+import struct
 import subprocess
 import sys
 import tarfile
 import tempfile
 import unittest
+import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ci"))
 from source import export_source
@@ -57,6 +61,45 @@ class SourceDelivery(unittest.TestCase):
         self.git("commit", "-qm", "Symlink fixture")
         with self.assertRaisesRegex(RuntimeError, "non-regular"):
             export_source(self.root, self.guide, self.output)
+
+
+    def test_windows_zip_requires_x64_dll_and_contains_matching_source(self):
+        fixture_ci = self.root / "ci"
+        fixture_ci.mkdir()
+        project_ci = Path(__file__).resolve().parents[1] / "ci"
+        for name in ("package.py", "source.py", "dependencies.json"):
+            shutil.copyfile(project_ci / name, fixture_ci / name)
+        (self.root / "CMakeLists.txt").write_text("project(obs-modulator VERSION 1.2.3)")
+        self.git("add", "ci", "CMakeLists.txt")
+        self.git("commit", "-qm", "Packaging entrypoint fixture")
+        stage = Path(self.temp.name) / "stage"
+        dll = stage / "obs-modulator/bin/64bit/obs-modulator.dll"
+        dll.parent.mkdir(parents=True)
+        out = Path(self.temp.name) / "dist"
+        command = [sys.executable, str(fixture_ci / "package.py"), "--stage", str(stage),
+                   "--guide", str(self.guide), "--output", str(out), "--platform", "windows-x64"]
+
+        # Exercise package checks with only a PE header. This fixture is never executable.
+        header = bytearray(0x80 + 24 + 0xf0)
+        header[:2] = b"MZ"
+        struct.pack_into("<I", header, 0x3c, 0x80)
+        header[0x80:0x84] = b"PE\0\0"
+        for machine, flags in [(0xaa64, 0x2000), (0x8664, 0)]:
+            struct.pack_into("<HHIIIHHH", header, 0x84, machine, 0, 0, 0, 0, 0xf0, flags, 0x20b)
+            dll.write_bytes(header)
+            result = subprocess.run(command, capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Expected a Windows x64 PE32+ DLL", result.stderr)
+
+        struct.pack_into("<HHIIIHHH", header, 0x84, 0x8664, 0, 0, 0, 0, 0xf0, 0x2000, 0x20b)
+        dll.write_bytes(header)
+        subprocess.run(command, check=True, capture_output=True)
+        with zipfile.ZipFile(out / "obs-modulator-1.2.3-preview-windows-x64.zip") as archive:
+            manifest = json.loads(archive.read("manifest.json"))
+            self.assertEqual(manifest["platform"], "windows-x64")
+            self.assertEqual(manifest["source_commit"], self.git("rev-parse", "HEAD"))
+            self.assertEqual(archive.read("obs-modulator/bin/64bit/obs-modulator.dll"), header)
+            self.assertIn("source.tar.gz", archive.namelist())
 
 
 if __name__ == "__main__":

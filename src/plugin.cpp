@@ -13,6 +13,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -55,12 +56,56 @@ void numeric_properties(obs_properties_t *props, std::vector<Numeric> &out, cons
     }
   }
 }
-double read_value(obs_source_t *target, const Numeric &n)
+// Controller parameters have session-only values. Settings remain the operator's
+// baseline, so saving a scene during feedback never saves a random phase value.
+struct AnimatedValue {
+  double baseline;
+  double value;
+};
+std::mutex parameter_mutex;
+std::map<std::string, std::map<std::string, AnimatedValue>> animated_parameters;
+
+bool controller_number(const std::string &key, Numeric &number)
+{
+  if (key == "period") number = {key, "Cycle time (seconds)", false, .05, 86400, .05};
+  else if (key == "minimum") number = {key, "Minimum", false, -1e12, 1e12, .01};
+  else if (key == "maximum") number = {key, "Maximum", false, -1e12, 1e12, .01};
+  else return false;
+  return true;
+}
+
+double animated_value(const std::string &id, const std::string &key, double baseline)
+{
+  std::lock_guard<std::mutex> lock(parameter_mutex);
+  auto controller = animated_parameters.find(id);
+  if (controller == animated_parameters.end()) return baseline;
+  auto &parameters = controller->second;
+  auto parameter = parameters.find(key);
+  if (parameter == parameters.end()) return baseline;
+  if (parameter->second.baseline == baseline) return parameter->second.value;
+  parameters.erase(parameter);
+  if (parameters.empty()) animated_parameters.erase(controller);
+  return baseline;
+}
+
+void write_parameter(obs_source_t *target, const Numeric &number, double baseline, double value)
+{
+  std::lock_guard<std::mutex> lock(parameter_mutex);
+  animated_parameters[obs_source_get_uuid(target)].insert_or_assign(number.key, AnimatedValue{baseline, value});
+}
+
+double read_base_value(obs_source_t *target, const Numeric &n)
 {
   auto d = settings(target);
   return n.integer ? static_cast<double>(obs_data_get_int(d.get(), n.key.c_str()))
                    : obs_data_get_double(d.get(), n.key.c_str());
 }
+double read_value(obs_source_t *target, const Numeric &n)
+{
+  const double baseline = read_base_value(target, n);
+  return is_controller(target) ? animated_value(obs_source_get_uuid(target), n.key, baseline) : baseline;
+}
+
 struct Scalar {
   obs_data_type type;
   double value;
@@ -123,11 +168,19 @@ struct Watch {
   Numeric number;
   std::shared_ptr<PropertyContext> context;
   uint64_t property_generation = 0;
+  const bool nested;
+  const double baseline;
   std::atomic<double> expected{0};
   std::atomic<uint64_t> write_generation{0};
   std::atomic<bool> wrote{false}, external{false}, dirty{false};
   std::shared_ptr<const Scalars> dependents=std::make_shared<const Scalars>();
   bool matches(obs_source_t *source) const {
+    if (nested) {
+      const double saved = read_base_value(source, number);
+      return saved == baseline &&
+             modulator::same_value(animated_value(obs_source_get_uuid(source), number.key, saved),
+                                   expected, false);
+    }
     auto d=settings(source);auto expected_dependents=std::atomic_load(&dependents);
     if(!modulator::same_value(read_value(source,number),expected,number.integer))return false;
     for(const auto &entry:*expected_dependents) {
@@ -154,11 +207,12 @@ struct Watch {
   static void schema(void *param, calldata_t *) { static_cast<Watch *>(param)->dirty = true; }
   Watch(obs_source_t *source, Numeric n, std::shared_ptr<PropertyContext> p)
     : target(obs_source_get_weak_source(source)), number(std::move(n)), context(std::move(p)),
-      property_generation(context->generation)
+      property_generation(context ? context->generation : 0),
+      nested(is_controller(source)), baseline(nested ? read_base_value(source, number) : 0)
   {
     auto *signals = obs_source_get_signal_handler(source);
     signal_handler_connect(signals, "update", changed, this);
-    signal_handler_connect(signals, "update_properties", schema, this);
+    if (!nested) signal_handler_connect(signals, "update_properties", schema, this);
   }
   ~Watch()
   {
@@ -166,7 +220,7 @@ struct Watch {
     if (source) {
       auto *signals = obs_source_get_signal_handler(source.get());
       signal_handler_disconnect(signals, "update", changed, this);
-      signal_handler_disconnect(signals, "update_properties", schema, this);
+      if (!nested) signal_handler_disconnect(signals, "update_properties", schema, this);
     }
     obs_weak_source_release(target);
   }
@@ -204,15 +258,29 @@ struct Controller {
   bool active = false, releasing = false, snapshot_valid = false, natural_return = false, armed = false;
   uint64_t shot_index = 0, shot_seed = 0;
   bool play_value_valid = false;
-  double play_value = 0;
+  double play_value = 0, play_baseline = 0;
   uint64_t play_revision = 0;
   std::string play_uuid, play_key;
-  double started = 0, checked = 0, snapshot = 0, ease_start = 0;
-  double release_started = 0, release_from = 0;
+  double phase_anchor = 0, anchor_time = 0, applied_period = 4;
+  double checked = 0, snapshot = 0, ease_start = 0;
+  double release_started = 0, release_period = 4, release_from = 0;
+
+  double phase(double now) const { return phase_anchor + (now - anchor_time) / applied_period; }
+  void start_cycle(double now, double period) {
+    phase_anchor = 0;
+    anchor_time = now;
+    applied_period = period;
+  }
+  void change_period(double now, double period) {
+    if (period == applied_period) return;
+    phase_anchor = phase(now);
+    anchor_time = now;
+    applied_period = period;
+  }
   uint64_t glider_seed = UINT64_C(14695981039346656037);
   std::string snapshot_uuid, snapshot_key, status = "Disabled — choose a target, then enable the eye";
   std::string identity, ui_source, ui_filter, ui_key;
-  bool snapshot_integer = false;
+  bool snapshot_integer = false, feedback_loop = false;
   StopReason stop_reason = StopReason::None;
   static void enabled(void *p, calldata_t *event) {
     auto &c=*static_cast<Controller *>(p);const auto revision=++c.revision;c.gate_changed=true;
@@ -248,12 +316,13 @@ Source resolve(obs_source_t *self, const Config &c)
     if (v.uuid == obs_source_get_uuid(f)) v.source = obs_source_get_ref(f);
   }, &find);
   auto found = own(find.source);
-  if (found && (obs_source_removed(found.get()) || is_controller(found.get()))) return own(nullptr);
+  if (found && obs_source_removed(found.get())) return own(nullptr);
   return found;
 }
 bool find_numeric(obs_source_t *target, const std::string &key, Numeric &n)
 {
   if (!target) return false;
+  if (is_controller(target)) return controller_number(key, n);
   auto p = properties(target);return find_numeric(p.get(),key,n);
 }
 bool find_numeric(obs_properties_t *props, const std::string &key, Numeric &n)
@@ -263,6 +332,69 @@ bool find_numeric(obs_properties_t *props, const std::string &key, Numeric &n)
   if (it == all.end()) return false;
   n = *it; return true;
 }
+struct FeedbackLoop {
+  std::string signature;
+  bool accepted = false;
+};
+using FeedbackLoops = std::map<std::string, std::shared_ptr<const FeedbackLoop>>;
+struct FeedbackEdge { std::string destination, key, consent; };
+using FeedbackEdges = std::map<std::string, FeedbackEdge>;
+
+void collect_feedback_edge(FeedbackEdges &edges, obs_source_t *self, const Config &cfg,
+                           obs_data_t *data)
+{
+  Numeric number;
+  if (cfg.filter.empty() || cfg.type != 2 || !controller_number(cfg.key, number)) return;
+  auto target = resolve(self, cfg);
+  if (target && is_controller(target.get()))
+    edges.emplace(obs_source_get_uuid(self), FeedbackEdge{
+      obs_source_get_uuid(target.get()), cfg.key, obs_data_get_string(data, "feedback_consent")});
+}
+
+FeedbackLoops feedback_loops(const FeedbackEdges &edges)
+{
+  FeedbackLoops result;
+  std::set<std::string> visited;
+  for (const auto &entry : edges) {
+    std::set<std::string> path;
+    std::string id = entry.first;
+    while (edges.count(id) && !visited.count(id) && path.insert(id).second)
+      id = edges.at(id).destination;
+    visited.insert(path.begin(), path.end());
+    if (!path.count(id)) continue;
+
+    std::set<std::string> members;
+    for (std::string next = id; members.insert(next).second; next = edges.at(next).destination) {}
+    auto loop = std::make_shared<FeedbackLoop>();
+    for (const auto &member : members) {
+      const auto &edge = edges.at(member);
+      loop->signature += member + "/" + edge.destination + "/" + edge.key + ";";
+    }
+    for (const auto &member : members)
+      if (edges.at(member).consent == loop->signature) loop->accepted = true;
+    for (const auto &member : members) result.emplace(member, loop);
+  }
+  return result;
+}
+
+FeedbackLoop selected_feedback(obs_source_t *self, obs_data_t *draft)
+{
+  std::vector<Handle> list;
+  { std::lock_guard<std::mutex> lock(registry_mutex); list = controllers; }
+  FeedbackEdges edges;
+  for (const auto &handle : list) {
+    if (handle->dead) continue;
+    auto source = own(obs_weak_source_get_source(handle->self));
+    if (!source || obs_source_removed(source.get())) continue;
+    auto saved = settings(source.get());
+    auto *data = source.get() == self ? draft : saved.get();
+    collect_feedback_edge(edges, source.get(), config(data), data);
+  }
+  const auto loops = feedback_loops(edges);
+  const auto it = loops.find(obs_source_get_uuid(self));
+  return it == loops.end() ? FeedbackLoop{} : *it->second;
+}
+
 void status(Controller &c, obs_source_t *self, const std::string &message)
 {
   if (c.status == message) return;
@@ -316,23 +448,39 @@ void finish(Controller &c, obs_source_t *self, const Config &cfg)
 void pump(void *)
 {
   // One frame-paced UI task, partial writes batched by target. No shot timers.
-  if(stopping){property_contexts.clear();pending=false;return;}
+  if (stopping) {
+    property_contexts.clear();
+    std::lock_guard<std::mutex> lock(parameter_mutex);
+    animated_parameters.clear();
+    pending = false;
+    return;
+  }
   for(auto i=property_contexts.begin();i!=property_contexts.end();)
     if(i->second.expired())i=property_contexts.erase(i);else ++i;
   std::vector<Handle> list;
   {std::lock_guard<std::mutex> lock(registry_mutex);list=controllers;}
   // Resolve configuration once per controller, not once per sort comparison.
   std::map<Controller *,bool> established;
-  for(auto &h:list){std::lock_guard<std::recursive_mutex> lock(h->mutex);
-    auto self=own(obs_weak_source_get_source(h->self));
-    auto d=self ? settings(self.get()):Data(nullptr,obs_data_release);
-    established[h.get()]=self && h->active && config(d.get())==h->last;}
+  FeedbackEdges edges;
+  for (auto &h : list) {
+    std::lock_guard<std::recursive_mutex> lock(h->mutex);
+    auto self = own(obs_weak_source_get_source(h->self));
+    established[h.get()] = false;
+    if (!self || h->dead || obs_source_removed(self.get())) continue;
+    auto data = settings(self.get());
+    const auto cfg = config(data.get());
+    established[h.get()] = h->active && cfg == h->last;
+    collect_feedback_edge(edges, self.get(), cfg, data.get());
+  }
   std::sort(list.begin(),list.end(),[&](const Handle &a,const Handle &b){
     const bool aa=established.at(a.get()),bb=established.at(b.get());
     return aa!=bb ? aa>bb : a->identity<b->identity;
   });
   std::map<std::string,Controller *> owners;
   std::map<std::string,Batch> batches;
+  const auto loops = feedback_loops(edges);
+  struct ParameterRestore { Source target; Numeric number; double baseline, value; };
+  std::vector<ParameterRestore> parameter_restores;
   const double now=engine_now();
   for(auto &h:list) {
     auto &c=*h;std::lock_guard<std::recursive_mutex> lock(c.mutex);
@@ -343,15 +491,23 @@ void pump(void *)
     // A later eye-off cancels an older Play, even if off/on coalesced in one frame.
     if(c.disabled_revision>c.play_revision){c.play=false;c.play_value_valid=false;}
     auto d=settings(self.get());const Config cfg=config(d.get());
+    const auto loop = loops.find(c.identity);
+    c.feedback_loop = loop != loops.end();
     if(c.restore.exchange(false)) {
       disable(c,self.get(),"Disabled — restored starting value",Controller::StopReason::None);
       auto target=resolve(self.get(),cfg);Numeric n;
       if(c.snapshot_valid && target && c.snapshot_uuid==obs_source_get_uuid(target.get()) &&
          c.snapshot_key==cfg.key && find_numeric(target.get(),cfg.key,n) && n.integer==c.snapshot_integer) {
-        auto context=property_context(target.get(),now);auto current=settings(target.get());
-        write(current,n,std::clamp(c.snapshot,n.low,n.high));
-        if(obs_property_modified(obs_properties_get(context->props.get(),n.key.c_str()),current.get()))context->dirty=true;
-        if(!obs_source_removed(target.get()))obs_source_update(target.get(),nullptr);
+        const double restored = std::clamp(c.snapshot, n.low, n.high);
+        if (is_controller(target.get())) {
+          const double baseline = read_base_value(target.get(), n);
+          parameter_restores.push_back({std::move(target), n, baseline, restored});
+        } else {
+          auto context=property_context(target.get(),now);auto current=settings(target.get());
+          write(current,n,restored);
+          if(obs_property_modified(obs_properties_get(context->props.get(),n.key.c_str()),current.get()))context->dirty=true;
+          if(!obs_source_removed(target.get()))obs_source_update(target.get(),nullptr);
+        }
       } else {c.stop_reason=Controller::StopReason::Invalid;status(c,self.get(),"Disabled — starting value unavailable for this target");}
       continue;
     }
@@ -363,6 +519,10 @@ void pump(void *)
     }
     auto *parent=obs_filter_get_parent(self.get());
     bool enabled=obs_source_enabled(self.get());
+    if (c.feedback_loop && !loop->second->accepted && (enabled || c.active)) {
+      disable(c,self.get(),"Disabled — feedback loop needs acknowledgement in filter properties");
+      continue;
+    }
     bool requested=enabled && parent && obs_source_showing(parent);
     if(cfg.one_shot && gate_changed && enabled && !c.active){c.armed=true;c.stop_reason=Controller::StopReason::None;}
     // Check the old watch BEFORE processing a queued Play/restart/eye edge.
@@ -389,6 +549,11 @@ void pump(void *)
       continue;
     }
     if(cfg.key.empty()){disable(c,self.get(),"Disabled — choose a numeric target");continue;}
+    double low = animated_value(c.identity, "minimum", cfg.low);
+    double high = animated_value(c.identity, "maximum", cfg.high);
+    const double period = animated_value(c.identity, "period", cfg.period);
+    const bool animated_range = low != cfg.low || high != cfg.high;
+    if (animated_range && low > high) std::swap(low, high);
     if(!std::isfinite(cfg.low) || !std::isfinite(cfg.high) || cfg.low>cfg.high ||
        !std::isfinite(cfg.period) || cfg.period<0.05 || cfg.period>86400 || cfg.wave<0 || cfg.wave>=modulator::wave_count) {
       disable(c,self.get(),"Disabled — invalid range, waveform, or cycle time");continue;
@@ -402,18 +567,23 @@ void pump(void *)
     owners[ownership]=&c;
     if(c.watch)for(const auto &dependent:*std::atomic_load(&c.watch->dependents))
       owners.emplace(uuid+"/"+dependent.first,&c);
-    auto context=property_context(target.get(),now);
-    if(!c.watch || now-c.checked>=1 || c.watch->dirty.exchange(false) || c.watch->property_generation!=context->generation) {
+    const bool nested = is_controller(target.get());
+    auto context = nested ? nullptr : property_context(target.get(), now);
+    const auto generation = context ? context->generation : 0;
+    if(!c.watch || now-c.checked>=1 || c.watch->dirty.exchange(false) || c.watch->property_generation!=generation) {
       Numeric n;c.checked=now;
-      if(!find_numeric(context->props.get(),cfg.key,n) || cfg.type!=(n.integer?1:2)) {
+      const bool found = nested ? controller_number(cfg.key, n) : find_numeric(context->props.get(), cfg.key, n);
+      if(!found || cfg.type!=(n.integer?1:2)) {
         disable(c,self.get(),"Disabled — property missing, hidden, disabled, or changed type");continue;
       }
       if(cfg.low<n.low || cfg.high>n.high){disable(c,self.get(),"Disabled — modulation range exceeds target limits");continue;}
       if(!c.watch)c.watch=std::make_shared<Watch>(target.get(),n,context);
-      c.watch->property_generation=context->generation;
+      c.watch->property_generation=generation;
       c.watch->number.low=n.low;c.watch->number.high=n.high;
     }
     auto &w=*c.watch;
+    low = std::clamp(low, w.number.low, w.number.high);
+    high = std::clamp(high, w.number.low, w.number.high);
     if(requested && c.releasing && !c.natural_return && !cfg.one_shot){c.active=false;c.releasing=false;}
     const double current=read_value(target.get(),w.number);
     // Native property preparation can block. A fresh/retriggered performance
@@ -423,38 +593,48 @@ void pump(void *)
     const double motion_now=engine_now();
     if(c.play_value_valid) {
       const bool external=c.play_uuid==uuid && c.play_key==cfg.key &&
-        !modulator::same_value(current,c.play_value,w.number.integer);
+        (!modulator::same_value(current,c.play_value,w.number.integer) ||
+         (nested && read_base_value(target.get(), w.number) != c.play_baseline));
       c.play_value_valid=false;
       if(external){disable(c,self.get(),"Paused — target changed after Play; operator value preserved",Controller::StopReason::ExternalEdit);continue;}
     }
     if(!c.active) {
-      c.stop_reason=Controller::StopReason::None;c.armed=false;c.active=true;c.started=motion_now;c.snapshot=current;c.ease_start=current;
+      c.stop_reason=Controller::StopReason::None;c.armed=false;c.active=true;c.snapshot=current;c.ease_start=current;
+      c.start_cycle(motion_now, period);
       c.snapshot_uuid=uuid;c.snapshot_key=cfg.key;c.snapshot_integer=w.number.integer;c.snapshot_valid=std::isfinite(current);
       c.releasing=false;c.natural_return=false;
       if(cfg.one_shot)++c.shot_index;
       retrigger=false;
     }
     if(requested && (c.restart.exchange(false) || retrigger)) {
-      c.started=motion_now;c.ease_start=current;c.releasing=false;c.natural_return=false;
+      c.start_cycle(motion_now, period);
+      c.ease_start=current;c.releasing=false;c.natural_return=false;
       if(cfg.one_shot)++c.shot_index;
     }
+    const double phase = c.phase(motion_now);
+    const double elapsed_period = c.applied_period;
+    c.change_period(motion_now, period);
     const auto wave=static_cast<modulator::Wave>(cfg.wave);
-    auto shot=[&](double elapsed){return modulator::shot_mapped(wave,elapsed,cfg.period,cfg.low,cfg.high,
+    auto shot=[&](double cycles){return modulator::shot_mapped(wave,cycles,1,low,high,
       w.number.integer,w.number.low,w.number.high,c.shot_seed,cfg.ease_in,c.ease_start,c.shot_index);};
     if(!requested) {
       c.restart=false;
-      if(!c.releasing){c.releasing=true;c.release_started=motion_now;c.release_from=current;}
+      if(!c.releasing){
+        c.releasing=true;c.release_started=motion_now;c.release_period=period;c.release_from=current;
+      }
       c.natural_return=false;
-    } else if(cfg.one_shot && !c.releasing && motion_now-c.started>=cfg.period && cfg.ease_out) {
-      c.releasing=true;c.natural_return=true;c.release_started=c.started+cfg.period;c.release_from=shot(cfg.period);
+    } else if(cfg.one_shot && !c.releasing && phase>=1 && cfg.ease_out) {
+      c.releasing=true;c.natural_return=true;
+      c.release_started=motion_now-(phase-1)*elapsed_period;
+      c.release_period=period;c.release_from=shot(1);
     }
-    const double value=c.releasing ? modulator::eased_return(motion_now-c.release_started,cfg.period,c.release_from,c.snapshot,
+    const double value=c.releasing ? modulator::eased_return(motion_now-c.release_started,c.release_period,c.release_from,c.snapshot,
         w.number.integer,w.number.low,w.number.high)
-      : cfg.one_shot ? shot(motion_now-c.started)
-      : modulator::mapped(wave,motion_now-c.started,cfg.period,cfg.low,cfg.high,w.number.integer,
+      : cfg.one_shot ? shot(phase)
+      : modulator::mapped(wave,phase,1,low,high,w.number.integer,
           w.number.low,w.number.high,c.glider_seed,cfg.ease_in,c.ease_start);
     if(!std::isfinite(value)){disable(c,self.get(),"Disabled — non-finite target value");continue;}
-    const bool ending=c.releasing ? motion_now-c.release_started>=cfg.period : cfg.one_shot && motion_now-c.started>=cfg.period;
+    const bool ending=c.releasing ? motion_now-c.release_started>=c.release_period : cfg.one_shot && phase>=1;
     if((ending && current!=value) || !modulator::same_value(current,value,w.number.integer)) {
       auto &batch=batches[uuid];if(!batch.target)batch.target=own(obs_source_get_ref(target.get()));
       batch.changes.push_back({h,w.number,current,value,c.revision.load(),ending});
@@ -463,14 +643,23 @@ void pump(void *)
       if(ending){finish(c,self.get(),cfg);continue;}
     }
     const uint64_t interval=obs_get_frame_interval_ns();
-    status(c,self.get(),c.releasing ? "Easing out — returning to starting value; manual edits cancel"
-      : interval && cfg.period<8.0*static_cast<double>(interval)/1e9
-      ? "Running — fewer than 8 frames per cycle; motion may alias" : "Running — manual target edits turn this eye off");
+    std::string message = c.releasing ? "Easing out — returning to starting value; manual edits cancel"
+      : interval && period<8.0*static_cast<double>(interval)/1e9
+      ? "Running — fewer than 8 frames per cycle; motion may alias" : "Running — manual target edits turn this eye off";
+    if (c.feedback_loop) message += " · Feedback loop";
+    status(c, self.get(), message);
+  }
+  // Every controller sees values from before this commit, including self-loops.
+  for (auto &restore : parameter_restores) {
+    if (!obs_source_removed(restore.target.get()) &&
+        read_base_value(restore.target.get(), restore.number) == restore.baseline)
+      write_parameter(restore.target.get(), restore.number, restore.baseline, restore.value);
   }
   for(auto &entry:batches) {
     auto &batch=entry.second;bool changed=false;
     if(obs_source_removed(batch.target.get()))continue;
-    auto context=property_context(batch.target.get(),now);
+    const bool nested = is_controller(batch.target.get());
+    auto context = nested ? nullptr : property_context(batch.target.get(), now);
     auto current=settings(batch.target.get());
     // A callback can submit its own synchronous update. Guard all watched
     // fields of this target during the transaction, then verify readback. This
@@ -496,11 +685,17 @@ void pump(void *)
         disable(c,self.get(),"Paused — target changed externally; enable the eye to restart",Controller::StopReason::ExternalEdit);continue;
       }
       Numeric accepted;
-      if(!find_numeric(context->props.get(),change.number.key,accepted) || accepted.integer!=change.number.integer ||
+      const bool found = nested ? controller_number(change.number.key, accepted)
+                                : find_numeric(context->props.get(),change.number.key,accepted);
+      if(!found || accepted.integer!=change.number.integer ||
          change.value<accepted.low || change.value>accepted.high) {
         disable(c,self.get(),"Disabled — target property changed before its edit");continue;
       }
       auto watch=c.watch;watch->expected=change.value;watch->wrote=true;change.applied=true;
+      if (nested) {
+        write_parameter(batch.target.get(), accepted, watch->baseline, change.value);
+        continue;
+      }
       // Edit only this key in the CURRENT settings, then run its native OBS
       // callback. Dependent changes made by that callback are part of the edit;
       // never reapply a stale full settings snapshot or call unrelated callbacks.
@@ -563,6 +758,33 @@ void preserve_selection(obs_property_t *p,const char *value,const char *label)
     if(std::string(obs_property_list_item_string(p,i))==value)return;
   obs_property_list_add_string(p,label,value);
 }
+void feedback_choices(obs_properties_t *props, const FeedbackLoop &loop)
+{
+  auto *notice = obs_properties_get(props, "feedback_notice");
+  auto *allow = obs_properties_get(props, "allow_feedback");
+  obs_property_set_visible(notice, !loop.signature.empty());
+  obs_property_set_visible(allow, !loop.signature.empty() && !loop.accepted);
+  obs_property_set_description(notice, loop.accepted ?
+    "Feedback loop acknowledged. Enable its filters to run." :
+    "This mapping is part of a feedback loop. The result may change rapidly or behave unpredictably. Acknowledge this loop to run it.");
+}
+
+bool feedback_changed(void *priv, obs_properties_t *props, obs_property_t *, obs_data_t *draft)
+{
+  if (!priv || !obs_data_get_bool(draft, "allow_feedback")) return false;
+  // A transient checkbox action avoids replaying consent on property refresh or
+  // on load. Save only the signature of the exact connections being reviewed.
+  obs_data_set_bool(draft, "allow_feedback", false);
+  auto self = own(obs_weak_source_get_source(static_cast<Controller *>(priv)->self));
+  if (!self) return false;
+  auto loop = selected_feedback(self.get(), draft);
+  if (loop.signature.empty()) return true;
+  obs_data_set_string(draft, "feedback_consent", loop.signature.c_str());
+  loop.accepted = true;
+  feedback_choices(props, loop);
+  return true;
+}
+
 void choices(obs_properties_t *props, Controller *c, obs_data_t *d)
 {
   auto self = own(c ? obs_weak_source_get_source(c->self):nullptr);
@@ -573,14 +795,24 @@ void choices(obs_properties_t *props, Controller *c, obs_data_t *d)
   obs_property_list_add_string(fields,"Choose a numeric property","");
   auto preserve=[&](){preserve_selection(filters,obs_data_get_string(d,"filter_uuid"),"Missing filter — select a replacement");
     preserve_selection(fields,obs_data_get_string(d,"property"),"Unavailable property — select a replacement");};
+  feedback_choices(props, self ? selected_feedback(self.get(), d) : FeedbackLoop{});
   if (!self) {preserve();return;}
   Config cfg=config(d); cfg.filter.clear(); auto parent=resolve(self.get(),cfg);
   if (parent) obs_source_enum_filters(parent.get(),[](obs_source_t *,obs_source_t *f,void *p) {
-    if (!is_controller(f)) obs_property_list_add_string(static_cast<obs_property_t *>(p),obs_source_get_name(f),obs_source_get_uuid(f));
+    if (!obs_source_removed(f)) obs_property_list_add_string(static_cast<obs_property_t *>(p),obs_source_get_name(f),obs_source_get_uuid(f));
   },filters);
   auto target=resolve(self.get(),config(d));
   if (!target) {preserve();return;}
-  auto p=properties(target.get()); std::vector<Numeric> all; numeric_properties(p.get(),all);
+  std::vector<Numeric> all;
+  if (is_controller(target.get())) {
+    for (const char *key : {"period", "minimum", "maximum"}) {
+      Numeric number;
+      if (controller_number(key, number)) all.push_back(std::move(number));
+    }
+  } else {
+    auto p=properties(target.get());
+    numeric_properties(p.get(), all);
+  }
   for (const auto &n:all) obs_property_list_add_string(fields,n.label.c_str(),n.key.c_str());
   Numeric n;
   if (find_numeric(target.get(),obs_data_get_string(d,"property"),n)) {
@@ -625,7 +857,10 @@ bool request_play(Controller &c, obs_source_t *self)
   auto d=settings(self);const Config cfg=config(d.get());if(!cfg.one_shot)return false;
   auto target=resolve(self,cfg);Numeric n;
   c.play_value_valid=target && find_numeric(target.get(),cfg.key,n) && cfg.type==(n.integer ? 1:2);
-  if(c.play_value_valid){c.play_value=read_value(target.get(),n);c.play_uuid=obs_source_get_uuid(target.get());c.play_key=cfg.key;}
+  if(c.play_value_valid){
+    c.play_value=read_value(target.get(),n);c.play_baseline=read_base_value(target.get(),n);
+    c.play_uuid=obs_source_get_uuid(target.get());c.play_key=cfg.key;
+  }
   c.play_revision=++c.revision;c.play=true;c.armed=true;obs_source_set_enabled(self,true);return true;
 }
 bool play_clicked(obs_properties_t *, obs_property_t *, void *priv)
@@ -645,7 +880,7 @@ bool playback_choices(void *, obs_properties_t *props, obs_property_t *, obs_dat
   obs_property_set_visible(obs_properties_get(props,"restart"),!cfg.one_shot);
   obs_property_set_enabled(obs_properties_get(props,"ease_in"),!(cfg.one_shot && cfg.wave==5));
   obs_property_set_description(obs_properties_get(props,"duration"),cfg.one_shot ?
-    ("Total shot: "+std::to_string(cfg.period*(cfg.ease_out ? 2:1))+" seconds. Ease in shares the first cycle.").c_str()
+    ("Total shot at the configured rate: "+std::to_string(cfg.period*(cfg.ease_out ? 2:1))+" seconds. Ease in shares the first cycle.").c_str()
     : "Continuous modulation; no total completion time.");
   obs_property_set_description(obs_properties_get(props,"ease_in_help"),cfg.one_shot && cfg.wave==5 ?
     "Glider always starts smoothly at the current value. Ease in has no effect here; Ease out can still return to the activation value." :
@@ -672,6 +907,10 @@ obs_properties_t *get_properties(void *data)
   obs_properties_add_bool(props,"ease_out","Ease out");
   obs_properties_add_text(props,"ease_in_help","",OBS_TEXT_INFO);
   obs_properties_add_text(props,"duration","",OBS_TEXT_INFO);
+  obs_properties_add_text(props,"feedback_notice","",OBS_TEXT_INFO);
+  auto *allow = obs_properties_add_bool(props,"allow_feedback","I understand — allow this feedback loop");
+  obs_property_set_modified_callback2(allow,feedback_changed,c);
+  feedback_choices(props, {});
   obs_properties_add_button2(props,"play","Play / retrigger",play_clicked,c);
   obs_properties_add_button2(props,"restart","Restart cycle",restart_clicked,c);
   obs_properties_add_button2(props,"restore","Restore starting value and disable",restore_clicked,c);
@@ -734,6 +973,10 @@ void destroy(void *data)
 {
   std::unique_ptr<Handle> holder(static_cast<Handle *>(data));
   (*holder)->dead=true;
+  {
+    std::lock_guard<std::mutex> lock(parameter_mutex);
+    animated_parameters.erase((*holder)->identity);
+  }
   std::lock_guard<std::mutex> lock(registry_mutex);
   controllers.erase(std::remove(controllers.begin(),controllers.end(),*holder),controllers.end());
 }
@@ -803,7 +1046,10 @@ public:
       if(!self || obs_source_removed(self.get()) || !parent || obs_source_removed(parent.get()))continue;
       auto d=settings(self.get());const Config cfg=config(d.get());
       MonitorRow row;row.id=h->identity;row.source=obs_source_get_name(parent.get());row.name=obs_source_get_name(self.get());
-      row.enabled=obs_source_enabled(self.get());row.low=cfg.low;row.high=cfg.high;row.waveform=cfg.wave;
+      row.enabled=obs_source_enabled(self.get());row.waveform=cfg.wave;row.feedback_loop=h->feedback_loop;
+      row.low=animated_value(h->identity, "minimum", cfg.low);
+      row.high=animated_value(h->identity, "maximum", cfg.high);
+      if ((row.low != cfg.low || row.high != cfg.high) && row.low > row.high) std::swap(row.low, row.high);
       row.property=cfg.key;row.reason=h->status;row.integer=cfg.type==1;row.one_shot=cfg.one_shot;
       const std::string sig=cfg.source+"/"+cfg.filter+"/"+cfg.key+"/"+std::to_string(cfg.type)+"/"+obs_source_get_uuid(parent.get());
       auto it=cache.find(row.id);Source target=own(nullptr);
@@ -831,21 +1077,20 @@ public:
       else if(row.enabled) {
         if(!obs_source_showing(parent.get()))row.state=MonitorState::Waiting;
         else if(!compatible || !h->active || h->gate_changed)row.state=MonitorState::Starting;
-        else if(cfg.ease_in && !(cfg.one_shot && cfg.wave==5) && now-h->started<cfg.period)row.state=MonitorState::EasingIn;
+        else if(cfg.ease_in && !(cfg.one_shot && cfg.wave==5) && h->phase(now)<1)row.state=MonitorState::EasingIn;
         else row.state=MonitorState::Running;
       } else if(compatible && h->stop_reason==Controller::StopReason::ExternalEdit)row.state=MonitorState::Paused;
       else if(compatible && h->stop_reason==Controller::StopReason::Invalid)row.state=MonitorState::Error;
       if(!row.enabled && compatible && h->stop_reason==Controller::StopReason::Completed)row.state=MonitorState::Completed;
       if(!row.enabled && compatible && h->stop_reason==Controller::StopReason::Cancelled)row.state=MonitorState::Cancelled;
-      if(compatible && h->active && cfg.period>0) {
+      if(compatible && h->active) {
         row.timed=true;
-        const double elapsed=std::max(0.0,now-(h->releasing ? h->release_started:h->started));
-        row.phase_remaining=std::max(0.0,cfg.period-elapsed);
-        row.progress=h->releasing || cfg.one_shot || row.state==MonitorState::EasingIn ?
-          std::clamp(elapsed/cfg.period,0.0,1.0):std::fmod(elapsed/cfg.period,1.0);
-        if(!cfg.one_shot && !h->releasing && row.state==MonitorState::Running)
-          row.phase_remaining=cfg.period*(1.0-row.progress);
-        row.total_remaining=cfg.one_shot ? row.phase_remaining+(!h->releasing && cfg.ease_out ? cfg.period:0):0;
+        const double period = h->releasing ? h->release_period : h->applied_period;
+        const double cycles = std::max(0.0, h->releasing ? (now-h->release_started)/period : h->phase(now));
+        row.progress = h->releasing || cfg.one_shot || row.state==MonitorState::EasingIn ?
+          std::clamp(cycles,0.0,1.0) : std::fmod(cycles,1.0);
+        row.phase_remaining = period*(1-row.progress);
+        row.total_remaining = cfg.one_shot ? row.phase_remaining+(!h->releasing && cfg.ease_out ? period:0):0;
       }
       if(!row.available && !cfg.key.empty())row.state=MonitorState::Error;
       if(!row.available && !cfg.key.empty())row.reason=target ?
@@ -881,9 +1126,9 @@ bool obs_module_load(void)
   info.filter_add=filter_added;info.load=load;info.update=update;
   obs_register_source(&info);obs_add_tick_callback(tick,nullptr);
 #ifdef MODULATOR_DOCK
-  blog(LOG_INFO,"[obs-modulator] Loaded %s (LFO + monitor)", MODULATOR_VERSION);
+  blog(LOG_INFO,"[obs-modulator] Loaded %s (LFO + monitor + nested modulation)", MODULATOR_VERSION);
 #else
-  blog(LOG_INFO,"[obs-modulator] Loaded %s (LFO only)", MODULATOR_VERSION);
+  blog(LOG_INFO,"[obs-modulator] Loaded %s (LFO + nested modulation)", MODULATOR_VERSION);
 #endif
   return true;
 }
