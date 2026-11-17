@@ -102,23 +102,3 @@ jobs:
             build-macos/Testing/Temporary/LastTest.log
           retention-days: 14
           if-no-files-found: error
-  windows:
-    runs-on: windows-2025-vs2026
-    timeout-minutes: 55
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
-      - name: Build and smoke-test the Windows x64 preview
-        shell: pwsh
-        run: ci/windows-build.ps1
-      - name: Retain Windows archive and test evidence
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: windows-x64-preview
-          path: |
-            dist/
-            build-windows/Testing/Temporary/LastTest.log
-          retention-days: 14
-          if-no-files-found: error

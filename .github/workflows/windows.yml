@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+name: Windows preview
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+concurrency:
+  group: windows-preview-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-2025-vs2026
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Fetch pinned OBS source
+        shell: pwsh
+        timeout-minutes: 4
+        run: ci/windows-build.ps1 -Step Fetch
+      - name: Configure the OBS SDK and fetch its dependencies
+        shell: pwsh
+        timeout-minutes: 12
+        run: ci/windows-build.ps1 -Step Configure
+      - name: Build and install the OBS SDK
+        shell: pwsh
+        timeout-minutes: 12
+        run: ci/windows-build.ps1 -Step SDK
+      - name: Build, smoke-test and package the Windows x64 plugin
+        shell: pwsh
+        timeout-minutes: 10
+        run: ci/windows-build.ps1 -Step Package
+      - name: Retain Windows archive and test evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-x64-preview
+          path: |
+            dist/
+            build-windows/Testing/Temporary/LastTest.log
+          retention-days: 14
+          if-no-files-found: warn
