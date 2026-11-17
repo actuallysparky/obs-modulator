@@ -54,9 +54,12 @@ try {
     $obsBin = Join-Path $sdk 'bin/64bit'
     $env:Path = "$obsBin;$qt/bin;$deps/bin;$env:Path"
     $env:QT_QPA_PLATFORM_PLUGIN_PATH = "$qt/plugins/platforms"
+    if (!(Test-Path "$env:QT_QPA_PLATFORM_PLUGIN_PATH/qwindows.dll")) {
+        throw 'The pinned Qt kit is missing the Windows dock test backend (qwindows.dll)'
+    }
     cmake --preset windows-x64 "-DCMAKE_PREFIX_PATH=$sdk;$qt;$deps"
     cmake --build build-windows --config RelWithDebInfo --parallel
-    ctest --test-dir build-windows -C RelWithDebInfo --output-on-failure
+    ctest --test-dir build-windows -C RelWithDebInfo --verbose --timeout 60
     cmake --install build-windows --config RelWithDebInfo --prefix $stage
     python ci/windows-smoke.py "$stage/obs-modulator" "$obsBin" "$qt/bin" "$deps/bin"
     python ci/package.py --stage $stage --guide $Guide --output dist --platform windows-x64
