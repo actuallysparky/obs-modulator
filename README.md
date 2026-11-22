@@ -6,7 +6,7 @@ I made this to bring risk and excitement to your streams in the form of LFO cont
 
 I wanted to play an OBS effect from a MIDI pad. A quiet pad. Drums are alarming and I like to know where the exits are. Then I wanted a fader for the blur, and some of you wanted your DAW to tell the whole mess where beat one was. So here we are. OBS has joined the band.
 
-[Preview Alpha 0.4.0](https://github.com/actuallysparky/obs-modulator/releases/tag/v0.4.0-alpha.1) is the current tagged download for Mac, Windows x64, Linux x64 and Flatpak. The MIDI controls below are in 0.5.0 on main.
+The MIDI controls below require version 0.5.0 or later. Get the preview builds from [GitHub Releases](https://github.com/actuallysparky/obs-modulator/releases). For rollback, use [Preview Alpha 0.4.0](https://github.com/actuallysparky/obs-modulator/releases/tag/v0.4.0-alpha.1) with your pre-upgrade scene collection.
 
 ## Install or update
 
