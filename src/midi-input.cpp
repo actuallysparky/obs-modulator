@@ -229,8 +229,8 @@ struct Input::Impl {
       MIDIINCAPSW caps{};
       if (midiInGetDevCapsW(i, &caps, static_cast<UINT>(sizeof(caps)))) continue;
       auto name = utf8(caps.szPname);
-      auto interface = interface_name(i);
-      const auto id = interface.empty() ? "winmm-name:" + name : "winmm:" + interface;
+      const auto device_path = interface_name(i);
+      const auto id = device_path.empty() ? "winmm-name:" + name : "winmm:" + device_path;
       if (!name.empty()) endpoints.push_back({{id, std::move(name)}, i});
     }
 #elif defined(MODULATOR_MIDI_ALSA)
