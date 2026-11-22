@@ -4,21 +4,16 @@ I made this to bring risk and excitement to your streams in the form of LFO cont
 
 ## Preview builds
 
-Preview Alpha 0.4.0 lets one Modulator drive another’s cycle time, minimum or maximum. A slow Glider can change the speed of a second LFO while it runs. Feedback loops work after acknowledgement. Windows, for dem Mice, gets its first x64 preview. [Preview Alpha 0.3.1](https://github.com/actuallysparky/obs-modulator/releases/tag/v0.3.1-alpha.1) is available for rollback.
+I wanted to play an OBS effect from a MIDI pad. A quiet pad. Drums are alarming and I like to know where the exits are. Then I wanted a fader for the blur, and some of you wanted your DAW to tell the whole mess where beat one was. So here we are. OBS has joined the band.
 
-| Package | Target |
-| --- | --- |
-| Windows x64 ZIP | Windows 11 x64 with OBS 32.2.2 |
-| Mac universal ZIP | Apple Silicon and Intel with OBS 32.2.2 |
-| Native Linux x64 archive | Ubuntu/Kubuntu 24.04 with native OBS 32.2.2 |
-| Flatpak x64 bundle | OBS 32.2.2 with Freedesktop runtime 25.08 |
+[Preview Alpha 0.4.0](https://github.com/actuallysparky/obs-modulator/releases/tag/v0.4.0-alpha.1) is the current tagged download for Mac, Windows x64, Linux x64 and Flatpak. The MIDI controls below are in 0.5.0 on main.
 
 ## Install or update
 
 Quit OBS while streaming, recording and virtual camera are inactive. Keep a copy of any previous obs-modulator plugin outside the active plugin folder and back up a test scene collection. DID YOU HEAR ME ABOUT BACKING UP? Bear's aint wanna be responsible for wreck'n yer streams. Extract the archive; keep the complete plugin directory together.
 
 - Mac: place `obs-modulator.plugin` in `~/Library/Application Support/obs-studio/plugins/`. This preview uses an ad-hoc signature, not Developer ID notarization. If macOS blocks it, report the message; signed/notarized distribution remains a release task.
-- Windows: copy the complete `obs-modulator` folder into `%ProgramData%\obs-studio\plugins\`. Keep `bin\64bit\obs-modulator.dll` and `data\locale\` together inside that folder. For portable OBS, copy the DLL to `obs-plugins\64bit\` and copy its data to `data\obs-plugins\obs-modulator\` within your portable OBS directory.
+- Windows: copy the complete `obs-modulator` folder into `%ProgramData%\obs-studio\plugins`. Keep `bin\64bit\obs-modulator.dll` and `data\locale` together inside that folder. For portable OBS, copy the DLL to `obs-plugins\64bit` and copy its data to `data\obs-plugins\obs-modulator` within your portable OBS directory.
 - Native Linux: place the complete `obs-modulator` directory in `~/.config/obs-studio/plugins/`, or the equivalent OBS configuration directory when `XDG_CONFIG_HOME` is customized. The layout must be `plugins/obs-modulator/bin/64bit/obs-modulator.so` plus `plugins/obs-modulator/data/locale/`.
 
 Reopen OBS. Verify the current log reports `[obs-modulator] Loaded` with the version from the archive manifest, and the source's Add Effect Filter menu contains **LFO Modulator**. Start in an expendable test collection. For Flatpak OBS, use the extension build below instead of the native Linux archive.
@@ -40,6 +35,18 @@ The checkboxes are independent. Older mappings with the combined option checked 
 **Glider** takes long, smooth walks between random destinations inside the min/max range. Cycle time is one leg of that journey, not a round trip. Each continuous filter has its own sequence; restarting retraces it. Give it longer times for slow organic movement. Integer targets still move in whole steps. As a one-shot, it picks one fresh destination and stays there, unless Ease out brings it home. Ease in isn't needed for that journey.
 
 Duplicate the LFO filter for more controls. One active LFO owns each target/property. Transforms, mixer volume and application settings are outside this version.
+
+## Play it with MIDI
+
+- **Make it wiggle with your time.** If you must use beats, then I suppose you can sync with them. Pick **MIDI Clock** and give your LFO a quarter note, a bar, or whatever division gets the job done. Check **Downbeat aligned** to cue it for the next bar. Leave the box clear and it’ll jump in when you hit the pad, even if you’re playing on the “and.” For my fellow drone artists, **Seconds** remains the default and is right where you left it.
+- **Hit something.** Choose **Note input** or click **Learn note**. The channel and note controls appear once you have an input. The picker shows the note name and its MIDI number, like **C3 (60)**. Assign that note to a one-shot and stomp a filter into action. A looping effect can toggle with each tap or run for as long as you hold the key. I’d try a one-beat flash on a spare pad first. Or bee can give the laser fog one long swell and see how long he can stand to let it sit there.
+- **Twiddle something.** Learn a MIDI CC, pick a slider and give the knob a range worth playing. Move the fader and the LFO gets out of your way. With **Pickup**, a fader has to catch up to the slider before it takes over. Grab the blur in OBS and the next twitch of the fader won’t send your whole camera into the soup.
+
+Get the notes and knobs sorted in rehearsal. If you’re cueing on beat one, set the time signature, hit Play from the start in your DAW, and check the **Modulator Monitor** for clock and downbeat. Once the stream starts, the pad should be the only thing you have to hit.
+
+If you make something gloriously ridiculous with this, tell me what you played it with. I want to see the bit where the visuals come in. Bonus points for the most unusual MIDI controller. I’m looking at you, bee and Santa.
+
+MIDI input uses CoreMIDI on macOS, WinMM on Windows and ALSA on native Linux. Install the ALSA development package (`libasound2-dev` on Ubuntu) for a Linux build with MIDI. Flatpak MIDI access depends on the OBS sandbox and its access to the input.
 
 ## Live monitor dock
 

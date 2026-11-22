@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Sparky and OBS Modulator contributors
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "midi-input.hpp"
 #include "monitor.hpp"
 #include "platform.hpp"
 #include <obs-module.h>
@@ -17,7 +18,11 @@
 #include <QElapsedTimer>
 #endif
 
-namespace modulator { void monitor_test_pump(); void monitor_test_time(double); }
+namespace modulator {
+void monitor_test_pump();
+void monitor_test_time(double);
+void monitor_test_midi(midi::Event event);
+}
 static int checks=0, writes=0, property_queries=0;
 static bool hidden=false, integer=false;
 static bool callback_fixture=false, callback_integer=false, callback_refresh=false;
@@ -82,6 +87,333 @@ static obs_source_t *controller(obs_source_t *parent,const char *key="gain",bool
   auto *s=obs_source_create("sparky_lfo_modulator","LFO fixture",d,nullptr);obs_data_release(d);
   obs_source_filter_add(parent,s);return s;
 }
+static void test_midi(obs_source_t *source, modulator::MonitorFeed &feed)
+{
+  using modulator::midi::Kind;
+  constexpr auto pedals = "fixture:pedals";
+  constexpr auto fader = "fixture:fader";
+  constexpr auto clock = "fixture:clock";
+  constexpr int channel = 3;
+  constexpr int note = 42;
+  constexpr int cc = 9;
+
+  auto pump_at = [](double time) {
+    modulator::monitor_test_time(time);
+    modulator::monitor_test_pump();
+  };
+  auto input = [](const char *port, Kind kind, double time,
+                  int midi_channel = 0, int number = 0, int value = 0) {
+    modulator::monitor_test_midi({port, kind, midi_channel, number, value, time});
+  };
+  auto press = [&](double time) { input(pedals, Kind::NoteOn, time, channel, note, 127); };
+  auto release = [&](double time) { input(pedals, Kind::NoteOff, time, channel, note); };
+  auto move = [&](double time, int value) { input(fader, Kind::ControlChange, time, channel, cc, value); };
+  auto gain = [&] {
+    auto *data = obs_source_get_settings(source);
+    const auto value = obs_data_get_double(data, "gain");
+    obs_data_release(data);
+    return value;
+  };
+  auto remove = [&](obs_source_t *filter) {
+    obs_source_filter_remove(source, filter);
+    obs_source_release(filter);
+    feed.clear();
+  };
+  auto configure = [&](int mode, bool shot, bool hold, bool align, bool ease_out) {
+    auto *filter = controller(source);
+    obs_source_set_enabled(filter, false);
+    auto *data = obs_source_get_settings(filter);
+    obs_data_set_int(data, "waveform", 2);
+    obs_data_set_bool(data, "one_shot", shot);
+    obs_data_set_bool(data, "ease_out", ease_out);
+    obs_data_set_int(data, "midi_mode", mode);
+    obs_data_set_string(data, "midi_note_port", pedals);
+    obs_data_set_int(data, "midi_note_channel", channel);
+    obs_data_set_int(data, "midi_note", note);
+    obs_data_set_bool(data, "midi_hold", hold);
+    obs_data_set_string(data, "midi_clock_port", clock);
+    obs_data_set_int(data, "midi_division", 3); // Quarter note
+    obs_data_set_bool(data, "midi_align", align);
+    obs_data_set_int(data, "midi_meter_top", 3);
+    obs_data_set_int(data, "midi_meter_bottom", 4);
+    obs_source_update(filter, data);
+    obs_data_release(data);
+    return filter;
+  };
+  auto configure_cc = [&](bool pickup) {
+    auto *filter = controller(source);
+    obs_source_set_enabled(filter, false);
+    auto *data = obs_source_get_settings(filter);
+    obs_data_set_int(data, "midi_mode", 2);
+    obs_data_set_string(data, "midi_cc_port", fader);
+    obs_data_set_int(data, "midi_cc_channel", channel);
+    obs_data_set_int(data, "midi_cc", cc);
+    obs_data_set_bool(data, "midi_pickup", pickup);
+    obs_data_set_double(data, "minimum", 0);
+    obs_data_set_double(data, "maximum", 1);
+    obs_source_update(filter, data);
+    obs_data_release(data);
+    obs_source_set_enabled(filter, true);
+    return filter;
+  };
+
+  double start = 100000;
+  change(source, "gain", .93);
+  auto *filter = configure(0, false, false, false, false);
+  pump_at(start);
+  input(pedals, Kind::NoteOn, start + 1, channel + 1, note, 127);
+  input("fixture:other pedals", Kind::NoteOn, start + 1, channel, note, 127);
+  pump_at(start + 1);
+  CHECK(!obs_source_enabled(filter) && gain() == .93);
+  press(start + 2);
+  pump_at(start + 2);
+  CHECK(obs_source_enabled(filter) && gain() == .2);
+  release(start + 3);
+  pump_at(start + 3);
+  CHECK(obs_source_enabled(filter) && std::abs(gain() - .35) < 1e-12);
+  press(start + 4);
+  pump_at(start + 4);
+  CHECK(!obs_source_enabled(filter));
+  const auto stopped_value = gain();
+  pump_at(start + 5);
+  CHECK(gain() == stopped_value);
+  remove(filter);
+
+  start += 20;
+  filter = configure(0, false, true, false, false);
+  pump_at(start);
+  press(start + 1);
+  pump_at(start + 1);
+  CHECK(obs_source_enabled(filter));
+  release(start + 2);
+  pump_at(start + 2);
+  CHECK(!obs_source_enabled(filter));
+  press(start + 3);
+  release(start + 3);
+  pump_at(start + 3);
+  CHECK(!obs_source_enabled(filter));
+  press(start + 4);
+  pump_at(start + 4);
+  CHECK(obs_source_enabled(filter));
+  input(pedals, Kind::Disconnected, start + 5);
+  pump_at(start + 5);
+  CHECK(!obs_source_enabled(filter));
+  remove(filter);
+
+  start += 20;
+  filter = configure(0, true, false, false, false);
+  pump_at(start);
+  press(start + 1);
+  pump_at(start + 1);
+  release(start + 2);
+  pump_at(start + 2);
+  CHECK(obs_source_enabled(filter) && std::abs(gain() - .35) < 1e-12);
+  pump_at(start + 5);
+  CHECK(!obs_source_enabled(filter) && gain() == .8);
+  remove(filter);
+
+  // Run Learn through the real property buttons. Learning consumes the event
+  // and updates the saved binding without starting the effect.
+  start += 20;
+  change(source, "gain", .93);
+  filter = configure(0, false, false, false, false);
+  pump_at(start);
+  auto *note_props = obs_source_properties(filter);
+  auto *note_port = obs_properties_get(note_props, "midi_note_port");
+  auto *note_picker = obs_properties_get(note_props, "midi_note");
+  CHECK(obs_property_list_item_count(note_picker) == 128);
+  CHECK(obs_property_list_item_int(note_picker, 60) == 60);
+  CHECK(std::string(obs_property_list_item_name(note_picker, 60)) == "C3 (60)");
+  auto *draft = obs_data_create();
+  obs_data_set_string(draft, "midi_note_port", "");
+  CHECK(obs_property_modified(note_port, draft));
+  CHECK(obs_property_visible(note_port));
+  CHECK(obs_property_visible(obs_properties_get(note_props, "learn_note")));
+  CHECK(!obs_property_visible(obs_properties_get(note_props, "midi_note_channel")));
+  CHECK(!obs_property_visible(note_picker));
+  CHECK(!obs_property_visible(obs_properties_get(note_props, "midi_hold")));
+  obs_data_set_string(draft, "midi_note_port", pedals);
+  CHECK(obs_property_modified(note_port, draft));
+  CHECK(obs_property_visible(obs_properties_get(note_props, "midi_note_channel")));
+  CHECK(obs_property_visible(note_picker));
+  CHECK(obs_property_visible(obs_properties_get(note_props, "midi_hold")));
+  obs_data_release(draft);
+  obs_properties_destroy(note_props);
+  auto button = [&](const char *key) {
+    auto *props = obs_source_properties(filter);
+    auto *property = obs_properties_get(props, key);
+    CHECK(property && obs_property_visible(property));
+    obs_property_button_clicked(property, filter);
+    obs_properties_destroy(props);
+  };
+  auto check_note_binding = [&](const char *port, int midi_channel, int number) {
+    auto *data = obs_source_get_settings(filter);
+    CHECK(std::string(obs_data_get_string(data, "midi_note_port")) == port);
+    CHECK(obs_data_get_int(data, "midi_note_channel") == midi_channel);
+    CHECK(obs_data_get_int(data, "midi_note") == number);
+    obs_data_release(data);
+  };
+  button("learn_note");
+  input("fixture:stale", Kind::NoteOn, start - .1, 2, 60, 127);
+  move(start + .1, 127);
+  pump_at(start + .1);
+  check_note_binding(pedals, channel, note);
+  button("cancel_learn");
+  input("fixture:cancelled", Kind::NoteOn, start + .2, 2, 60, 127);
+  pump_at(start + .2);
+  check_note_binding(pedals, channel, note);
+  button("learn_note");
+  input("fixture:learned", Kind::NoteOn, start + .3, 2, 60, 127);
+  pump_at(start + .3);
+  CHECK(!obs_source_enabled(filter) && gain() == .93);
+  check_note_binding("fixture:learned", 2, 60);
+  auto *saved_binding = obs_save_source(filter);
+  remove(filter);
+  filter = obs_load_private_source(saved_binding);
+  obs_data_release(saved_binding);
+  CHECK(filter);
+  obs_source_filter_add(source, filter);
+  pump_at(start + .4);
+  check_note_binding("fixture:learned", 2, 60);
+  input("fixture:learned", Kind::NoteOn, start + .5, 2, 60, 127);
+  pump_at(start + .5);
+  CHECK(obs_source_enabled(filter) && gain() == .2);
+  remove(filter);
+
+  for (bool returning : {false, true}) {
+    start += 20;
+    change(source, "gain", .93);
+    filter = configure(0, false, false, false, true);
+    auto *cc_filter = configure_cc(true);
+    pump_at(start);
+    // Establish the fader position before the operator starts the oscillator.
+    move(start + 1, 0);
+    pump_at(start + 1);
+    press(start + 2);
+    pump_at(start + 2);
+    pump_at(start + 3);
+    CHECK(obs_source_enabled(filter) && std::abs(gain() - .35) < 1e-12);
+    if (returning) {
+      press(start + 3);
+      pump_at(start + 3);
+      pump_at(start + 4);
+      CHECK(!obs_source_enabled(filter) && gain() > .35 && gain() < .93);
+    }
+    const auto frozen = gain();
+    move(start + 4, 16);
+    pump_at(start + 4);
+    CHECK(!obs_source_enabled(filter) && gain() == frozen);
+    pump_at(start + 5);
+    CHECK(gain() == frozen);
+    move(start + 6, 100);
+    pump_at(start + 6);
+    CHECK(std::abs(gain() - 100. / 127) < 1e-9);
+    pump_at(start + 7);
+    CHECK(!obs_source_enabled(filter) && std::abs(gain() - 100. / 127) < 1e-9);
+
+    // A UI edit re-arms pickup and invalidates a CC buffered before it.
+    move(start + 7.5, 120);
+    change(source, "gain", .25);
+    pump_at(start + 8);
+    move(start + 9, 70);
+    pump_at(start + 9);
+    CHECK(gain() == .25);
+    move(start + 10, 16);
+    pump_at(start + 10);
+    CHECK(std::abs(gain() - 16. / 127) < 1e-9);
+    remove(cc_filter);
+    remove(filter);
+  }
+
+  start += 20;
+  change(source, "gain", .93);
+  filter = configure(0, false, false, false, true);
+  auto *cc_filter = configure_cc(false);
+  pump_at(start);
+  move(start + 1, 0);
+  pump_at(start + 1);
+  press(start + 2);
+  pump_at(start + 2);
+  move(start + 3, 39);
+  pump_at(start + 3);
+  CHECK(!obs_source_enabled(filter) && std::abs(gain() - 39. / 127) < 1e-9);
+  remove(cc_filter);
+  remove(filter);
+
+  // An exact binary tick interval avoids arithmetic ambiguity at a bar edge.
+  constexpr double tick = 1. / 32;
+  auto pulse = [&](int count) {
+    const auto time = start + count * tick;
+    input(clock, Kind::Clock, time);
+    pump_at(time);
+  };
+  start += 20;
+  change(source, "gain", .93);
+  filter = configure(1, true, false, true, false);
+  auto *clock_props = obs_source_properties(filter);
+  CHECK(obs_property_visible(obs_properties_get(clock_props, "midi_division")));
+  CHECK(obs_property_visible(obs_properties_get(clock_props, "midi_align")));
+  CHECK(!obs_property_visible(obs_properties_get(clock_props, "period")));
+  CHECK(!obs_property_visible(obs_properties_get(clock_props, "midi_cc")));
+  obs_properties_destroy(clock_props);
+  pump_at(start - tick);
+  input(clock, Kind::Start, start - tick);
+  for (int i = 0; i < 20; ++i) pulse(i);
+  pulse(20);
+  press(start + 20 * tick);
+  pump_at(start + 20 * tick);
+  CHECK(gain() == .93);
+  release(start + 21 * tick);
+  for (int i = 21; i < 72; ++i) pulse(i);
+  CHECK(gain() == .93);
+  pulse(72);
+  CHECK(std::abs(gain() - .2) < 1e-9);
+  for (int i = 73; i <= 96; ++i) pulse(i);
+  CHECK(!obs_source_enabled(filter) && std::abs(gain() - .8) < 1e-9);
+  remove(filter);
+
+  start += 20;
+  change(source, "gain", .93);
+  filter = configure(1, false, true, true, false);
+  pump_at(start - tick);
+  input(clock, Kind::Start, start - tick);
+  for (int i = 0; i < 20; ++i) pulse(i);
+  pulse(20);
+  press(start + 20 * tick);
+  pump_at(start + 20 * tick);
+  release(start + 21 * tick);
+  for (int i = 21; i <= 73; ++i) pulse(i);
+  CHECK(!obs_source_enabled(filter) && gain() == .93);
+  remove(filter);
+
+  start += 20;
+  change(source, "gain", .93);
+  filter = configure(1, false, false, false, false);
+  pump_at(start - tick);
+  input(clock, Kind::Start, start - tick);
+  for (int i = 0; i < 20; ++i) pulse(i);
+  pulse(20);
+  press(start + 20 * tick);
+  pump_at(start + 20 * tick);
+  CHECK(obs_source_enabled(filter) && std::abs(gain() - .2) < 1e-9);
+  for (int i = 21; i <= 32; ++i) pulse(i);
+  CHECK(std::abs(gain() - .5) < 1e-9);
+  input(clock, Kind::Stop, start + 32 * tick);
+  pump_at(start + 32 * tick);
+  const auto paused = gain();
+  for (int i = 33; i <= 40; ++i) pulse(i);
+  CHECK(gain() == paused);
+  input(clock, Kind::Continue, start + 41 * tick);
+  for (int i = 41; i <= 44; ++i) pulse(i);
+  CHECK(gain() > paused);
+  input(clock, Kind::Disconnected, start + 45 * tick);
+  pump_at(start + 45 * tick);
+  const auto lost = gain();
+  for (int i = 46; i <= 52; ++i) pulse(i);
+  CHECK(gain() == lost);
+  remove(filter);
+}
+
 int main(int argc,char **argv) {
 #ifdef MONITOR_UI_TEST
   QApplication app(argc,argv);
@@ -344,6 +676,33 @@ int main(int argc,char **argv) {
   // Operator takeover includes numeric values changed by the native callback.
   callback_shot();at(shot_clock+.5);change(callback_target,"derived",.99);at(shot_clock+1);
   CHECK(!obs_source_enabled(lfo) && target_value("gesture")==.125 && target_value("derived")==.99);remove(lfo);
+  // A direct MIDI move takes over even when an LFO owns the property through
+  // a callback side effect. It also prevents another gesture write that frame.
+  callback_shot();
+  at(shot_clock + .5);
+  CHECK(obs_source_enabled(lfo) && target_value("derived") == .375);
+  auto *midi_cc = controller(source, "derived");
+  auto *midi_cc_settings = obs_source_get_settings(midi_cc);
+  obs_data_set_string(midi_cc_settings, "source_uuid", obs_source_get_uuid(callback_target));
+  obs_data_set_int(midi_cc_settings, "midi_mode", 2);
+  obs_data_set_string(midi_cc_settings, "midi_cc_port", "fixture:macro fader");
+  obs_data_set_int(midi_cc_settings, "midi_cc_channel", 3);
+  obs_data_set_int(midi_cc_settings, "midi_cc", 17);
+  obs_data_set_bool(midi_cc_settings, "midi_pickup", false);
+  obs_data_set_double(midi_cc_settings, "minimum", 0);
+  obs_data_set_double(midi_cc_settings, "maximum", 30);
+  obs_source_update(midi_cc, midi_cc_settings);
+  obs_data_release(midi_cc_settings);
+  obs_source_set_enabled(midi_cc, true);
+  modulator::monitor_test_midi({"fixture:macro fader", modulator::midi::Kind::ControlChange,
+                               3, 17, 127, shot_clock + .75});
+  at(shot_clock + .75);
+  CHECK(!obs_source_enabled(lfo));
+  CHECK(target_value("gesture") == .125 && target_value("derived") == 30);
+  at(shot_clock + 1);
+  CHECK(target_value("gesture") == .125 && target_value("derived") == 30);
+  remove(midi_cc);
+  remove(lfo);
   // A discovered dependent setting is owned along with its compound control.
   callback_shot();at(shot_clock+.5);second=controller(source,"derived",false,2);
   second_cfg=obs_source_get_settings(second);obs_data_set_string(second_cfg,"source_uuid",obs_source_get_uuid(callback_target));
@@ -525,6 +884,7 @@ int main(int argc,char **argv) {
   at(start + 23);
   CHECK(!obs_source_enabled(driver) && !row_for(driver).available);
   remove(driver);
+  test_midi(source, *feed);
   modulator::monitor_test_time(-1);feed.reset();
   obs_source_dec_showing(source);obs_source_release(source);obs_module_unload();obs_shutdown();
   std::printf("%d monitor integration checks passed\n",checks);
