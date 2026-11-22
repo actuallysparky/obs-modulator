@@ -34,7 +34,9 @@ try {
     try {
         if ($Step -in 'All', 'Configure') {
             # OBS's preset hash-verifies its own Windows dependencies and Qt kit.
-            cmake --preset windows-x64 "-DOBS_VERSION_OVERRIDE=$obsVersion" -DENABLE_BROWSER=OFF -DENABLE_PLUGINS=OFF -DENABLE_SCRIPTING=OFF -DENABLE_FRONTEND=OFF
+            # Newer MSVC reports C4244 in the pinned OBS 32.2.2 bool getter.
+            # Keep the SDK warning visible. The plugin build still uses /WX.
+            cmake --preset windows-x64 "-DOBS_VERSION_OVERRIDE=$obsVersion" -DCMAKE_COMPILE_WARNING_AS_ERROR=OFF -DENABLE_BROWSER=OFF -DENABLE_PLUGINS=OFF -DENABLE_SCRIPTING=OFF -DENABLE_FRONTEND=OFF
             if ($Step -eq 'Configure') { return }
         }
         if ($Step -in 'All', 'SDK') {
