@@ -453,11 +453,11 @@ FeedbackLoop selected_feedback(obs_source_t *self, obs_data_t *draft)
   return it == loops.end() ? FeedbackLoop{} : *it->second;
 }
 
-void status(Controller &c, obs_source_t *self, const std::string &message)
+void status(Controller &c, const std::string &message)
 {
-  if (c.status == message) return;
-  c.status = message;
-  obs_source_update_properties(self);
+  // OBS rebuilds the filter properties view on update_properties. Playback
+  // status is read by the monitor and must not interrupt an active edit.
+  if (c.status != message) c.status = message;
 }
 void disable(Controller &c, obs_source_t *self, const char *why,
              Controller::StopReason reason = Controller::StopReason::Invalid)
@@ -467,7 +467,7 @@ void disable(Controller &c, obs_source_t *self, const char *why,
   c.restart=false; c.play=false; c.play_value_valid=false; c.armed=false;
   c.cue.reset();c.note_position.reset();c.cc_claim=false;c.cc_caught=false;c.pickup_previous.reset();c.cc_values.clear();++c.revision;
   obs_source_set_enabled(self, false);
-  status(c, self, why);
+  status(c, why);
 }
 void write(Data &delta, const Numeric &n, double value)
 {
@@ -483,6 +483,8 @@ struct Batch {
 };
 #ifdef MODULATOR_TESTING
 static double test_clock = -1;
+static void (*test_before_batch)(void *) = nullptr;
+static void *test_before_batch_context = nullptr;
 #endif
 double engine_now()
 {
@@ -496,7 +498,7 @@ void finish(Controller &c, obs_source_t *self, const Config &cfg)
   if(cfg.one_shot) {
     if(c.cue) {
       c.active=false;c.releasing=false;c.natural_return=false;
-      status(c,self,"Queued — next downbeat");
+      status(c, "Queued — next downbeat");
       return;
     }
     const bool complete=c.natural_return || obs_source_enabled(self);
@@ -505,7 +507,7 @@ void finish(Controller &c, obs_source_t *self, const Config &cfg)
       complete ? Controller::StopReason::Completed : Controller::StopReason::Cancelled);
   } else {
     c.active=false; c.releasing=false; c.watch.reset();
-    status(c,self,obs_source_enabled(self) ? "Waiting — eased back to starting value; parent is hidden"
+    status(c, obs_source_enabled(self) ? "Waiting — eased back to starting value; parent is hidden"
                                         : "Disabled — eased back to starting value");
   }
 }
@@ -583,7 +585,8 @@ void apply_midi_events(Controller &c, obs_source_t *self, const Config &cfg,
       obs_data_set_int(d.get(),learning_note ? "midi_note_channel" : "midi_cc_channel",event.channel);
       obs_data_set_int(d.get(),learning_note ? "midi_note" : "midi_cc",event.number);
       obs_source_update(self,d.get());
-      status(c,self,"MIDI binding learned");
+      status(c, "MIDI binding learned");
+      obs_source_update_properties(self);
       return;
     }
     if(learning)continue;
@@ -778,7 +781,7 @@ void pump(void *)
           if(obs_property_modified(obs_properties_get(context->props.get(),n.key.c_str()),current.get()))context->dirty=true;
           if(!obs_source_removed(target.get()))obs_source_update(target.get(),nullptr);
         }
-      } else {c.stop_reason=Controller::StopReason::Invalid;status(c,self.get(),"Disabled — starting value unavailable for this target");}
+      } else {c.stop_reason=Controller::StopReason::Invalid;status(c, "Disabled — starting value unavailable for this target");}
       continue;
     }
     if(!(cfg==c.last)) {
@@ -805,14 +808,14 @@ void pump(void *)
     if(c.watch && watched && (c.watch->external || (c.watch->wrote && !c.watch->matches(watched.get())))) {
       if(direct) {
         c.cc_claim=false;c.cc_caught=false;c.pickup_previous.reset();c.watch.reset();
-        status(c,self.get(),"Waiting — manual edit; move fader to pick up");continue;
+        status(c, "Waiting — manual edit; move fader to pick up");continue;
       }
       disable(c,self.get(),"Paused — target changed externally; enable the eye to restart",Controller::StopReason::ExternalEdit);continue;
     }
     if(direct && (!requested || (cc_values.empty() && !c.cc_claim))) {
       c.cc_claim=false;c.cc_caught=false;c.pickup_previous.reset();c.watch.reset();
-      if(requested)status(c,self.get(),cfg.midi.cc.empty() ? "Waiting — choose a MIDI CC input" : "Waiting — move mapped fader");
-      else status(c,self.get(),enabled ? "Waiting — parent source is hidden" : "Disabled — enable the eye for MIDI CC");
+      if(requested)status(c, cfg.midi.cc.empty() ? "Waiting — choose a MIDI CC input" : "Waiting — move mapped fader");
+      else status(c, enabled ? "Waiting — parent source is hidden" : "Disabled — enable the eye for MIDI CC");
       continue;
     }
     const bool play=c.play.exchange(false);
@@ -850,7 +853,7 @@ void pump(void *)
       } else {
         if(clock.stopped || !clock.valid || (cfg.midi.aligned && !clock.aligned)) {
           if(play && !c.active)c.armed=true;
-          status(c,self.get(),clock.stopped ? "MIDI stopped — holding phase" : clock.lost ?
+          status(c, clock.stopped ? "MIDI stopped — holding phase" : clock.lost ?
             "Clock lost — trigger again when the clock returns" : cfg.midi.aligned && clock.valid ?
             "Clock only — waiting for MIDI Start" : "Waiting — MIDI clock");
           continue;
@@ -876,7 +879,7 @@ void pump(void *)
                 disable(c,self.get(),"Disabled — target unavailable for queued MIDI start");
                 continue;
               }
-              status(c,self.get(),"Queued — next downbeat");
+              status(c, "Queued — next downbeat");
               continue;
             }
           }
@@ -891,10 +894,10 @@ void pump(void *)
       const bool cancelled=cfg.one_shot && (c.active || (!enabled && c.armed));
       c.active=false;c.releasing=false;c.natural_return=false;c.watch.reset();c.restart=false;
       if(cancelled){disable(c,self.get(),"Cancelled — holding last value; Play to run again",Controller::StopReason::Cancelled);}
-      else if(enabled)status(c,self.get(),"Waiting — parent source is hidden");
+      else if(enabled)status(c, "Waiting — parent source is hidden");
       else if(c.stop_reason==Controller::StopReason::None &&
         (c.status.rfind("Running",0)==0 || c.status.rfind("Waiting",0)==0 || c.status.rfind("Easing",0)==0))
-        status(c,self.get(),"Disabled — holding the last value");
+        status(c, "Disabled — holding the last value");
       continue;
     }
     if(cfg.key.empty()){disable(c,self.get(),"Disabled — choose a numeric target");continue;}
@@ -916,7 +919,7 @@ void pump(void *)
     if(owners.count(ownership)){
       if(direct) {
         c.cc_claim=false;c.cc_caught=false;c.pickup_previous.reset();c.watch.reset();
-        status(c,self.get(),"Waiting — another mapping owns this property");
+        status(c, "Waiting — another mapping owns this property");
       } else disable(c,self.get(),owners.at(ownership)->last.midi.mode==MidiMode::CC ?
         "Disabled — MIDI control owns this property" : "Disabled — another LFO owns this property");
       continue;
@@ -967,7 +970,7 @@ void pump(void *)
         }
       }
       if(!w.wrote){w.expected=current;w.wrote=true;}
-      status(c,self.get(),c.cc_caught ? "MIDI CC — controlling target" : current<low || current>high ?
+      status(c, c.cc_caught ? "MIDI CC — controlling target" : current<low || current>high ?
         "Waiting — current value is outside the fader range" : "Waiting — fader pickup");
       continue;
     }
@@ -1045,8 +1048,15 @@ void pump(void *)
     if(synced && requested && c.cue)message="Queued — next downbeat";
     else if(synced && !c.releasing)message+=clock.aligned ? " · Clock and downbeat" : " · Clock only";
     if (c.feedback_loop) message += " · Feedback loop";
-    status(c, self.get(), message);
+    status(c, message);
   }
+#ifdef MODULATOR_TESTING
+  if(!batches.empty() && test_before_batch) {
+    const auto callback=test_before_batch;
+    test_before_batch=nullptr;
+    callback(test_before_batch_context);
+  }
+#endif
   // Every controller sees values from before this commit, including self-loops.
   for (auto &restore : parameter_restores) {
     if (!obs_source_removed(restore.target.get()) &&
@@ -1333,8 +1343,18 @@ bool playback_choices(void *, obs_properties_t *props, obs_property_t *, obs_dat
   const bool cc=cfg.midi.mode==MidiMode::CC;
   const bool clock=cfg.midi.mode==MidiMode::Clock;
   const bool note_selected=!cc && !cfg.midi.note.empty();
+  bool changed=false;
   const auto visible=[&](const char *field,bool show) {
-    obs_property_set_visible(obs_properties_get(props,field),show);
+    auto *property=obs_properties_get(props,field);
+    if(obs_property_visible(property)==show)return;
+    obs_property_set_visible(property,show);
+    changed=true;
+  };
+  const auto describe=[&](const char *field,const char *description) {
+    auto *property=obs_properties_get(props,field);
+    if(std::string(obs_property_description(property))==description)return;
+    obs_property_set_description(property,description);
+    changed=true;
   };
   for(const auto *field:{"waveform","one_shot","ease_in","ease_out","ease_in_help","duration","restore","midi_note_port",
                          "learn_note"})visible(field,!cc);
@@ -1346,15 +1366,19 @@ bool playback_choices(void *, obs_properties_t *props, obs_property_t *, obs_dat
   visible("period",!clock && !cc);
   visible("play",!cc && cfg.one_shot);
   visible("restart",!cc && !cfg.one_shot);
-  obs_property_set_enabled(obs_properties_get(props,"ease_in"),!(cfg.one_shot && cfg.wave==5));
-  obs_property_set_description(obs_properties_get(props,"duration"),clock ?
-    (cfg.one_shot ? "One musical cycle, plus a separate return cycle if Ease out is enabled." : "Continuous modulation follows MIDI Clock.") : cfg.one_shot ?
-    ("Total shot at the configured rate: "+std::to_string(cfg.period*(cfg.ease_out ? 2:1))+" seconds. Ease in shares the first cycle.").c_str()
-    : "Continuous modulation; no total completion time.");
-  obs_property_set_description(obs_properties_get(props,"ease_in_help"),cfg.one_shot && cfg.wave==5 ?
+  auto *ease_in=obs_properties_get(props,"ease_in");
+  const bool glider_shot=cfg.one_shot && cfg.wave==5;
+  if(obs_property_enabled(ease_in)==glider_shot) {
+    obs_property_set_enabled(ease_in,!glider_shot);
+    changed=true;
+  }
+  describe("duration",cfg.one_shot ?
+    "One cycle, plus a separate return cycle if Ease out is enabled. See the Modulator Monitor for time remaining." :
+    "Continuous modulation; no total completion time.");
+  describe("ease_in_help",glider_shot ?
     "Glider always starts smoothly at the current value. Ease in has no effect here; Ease out can still return to the activation value." :
     "Ease in blends the current value into the moving waveform during its first cycle. Ease out adds a separate one-cycle return on stop. Manual edits always cancel immediately.");
-  return true;
+  return changed;
 }
 const char *name(void *) { return obs_module_text("FilterName"); }
 obs_properties_t *get_properties(void *data)
@@ -1410,13 +1434,13 @@ obs_properties_t *get_properties(void *data)
   obs_properties_add_button2(props,"restart","Restart cycle",restart_clicked,c);
   obs_properties_add_button2(props,"restore","Restore starting value and disable",restore_clicked,c);
   auto *s=obs_properties_add_text(props,"status","Disabled — configure the mapping, then enable the filter eye",OBS_TEXT_INFO);
-  obs_properties_add_text(props,"help","Enable the eye or Play to run while the parent is showing (including previews). One shot stops at its endpoint; Ease out optionally returns home. Hiding interrupts a shot. Operator control always wins: target edits turn the eye off and cancel queued work. Target dialogs may not redraw continuously.",OBS_TEXT_INFO);
+  obs_properties_add_text(props,"help","Enable the eye or Play to run while the parent is showing (including previews). One shot stops at its endpoint; Ease out optionally returns home. Hiding interrupts a shot. Operator control always wins: target edits turn the eye off and cancel queued work. Target dialogs may not redraw continuously. For live status, open Docks → Modulator Monitor.",OBS_TEXT_INFO);
   obs_property_set_modified_callback2(src,target_changed,c);obs_property_set_modified_callback2(f,target_changed,c);
   obs_property_set_modified_callback2(key,property_changed,c);
-  for(const char *field:{"one_shot","waveform","ease_out","period","midi_mode","midi_note_port"})
+  for(const char *field:{"one_shot","waveform","midi_mode","midi_note_port"})
     obs_property_set_modified_callback2(obs_properties_get(props,field),playback_choices,c);
   auto initial=Data(obs_data_create(),obs_data_release);
-  obs_data_set_double(initial.get(),"period",4);playback_choices(c,props,nullptr,initial.get());
+  playback_choices(c,props,nullptr,initial.get());
   obs_property_set_visible(obs_properties_get(props,"cancel_learn"),false);
   if(c) {
     std::lock_guard<std::recursive_mutex> lock(c->mutex);
@@ -1640,6 +1664,11 @@ std::unique_ptr<MonitorFeed> make_monitor_feed() { return std::make_unique<Contr
 #ifdef MODULATOR_TESTING
 void monitor_test_pump() { pump(nullptr); }
 void monitor_test_time(double now) { test_clock=now; }
+void monitor_test_before_batch(void (*callback)(void *), void *context)
+{
+  test_before_batch=callback;
+  test_before_batch_context=context;
+}
 void monitor_test_midi(midi::Event event) { injected_midi.push_back(std::move(event)); }
 #endif
 }

@@ -22,6 +22,7 @@ namespace modulator {
 void monitor_test_pump();
 void monitor_test_time(double);
 void monitor_test_midi(midi::Event event);
+void monitor_test_before_batch(void (*callback)(void *), void *context);
 }
 static int checks=0, writes=0, property_queries=0;
 static bool hidden=false, integer=false;
@@ -161,6 +162,23 @@ static void test_midi(obs_source_t *source, modulator::MonitorFeed &feed)
   change(source, "gain", .93);
   auto *filter = configure(0, false, false, false, false);
   pump_at(start);
+  int property_refreshes=0;
+  auto count_refresh=[](void *data,calldata_t *) { ++*static_cast<int *>(data); };
+  auto *filter_signals=obs_source_get_signal_handler(filter);
+  signal_handler_connect(filter_signals,"update_properties",count_refresh,&property_refreshes);
+  auto *seconds_properties=obs_source_properties(filter);
+  auto *seconds=obs_source_get_settings(filter);
+  auto *period=obs_properties_get(seconds_properties,"period");
+  obs_data_set_double(seconds,"period",4.05);
+  CHECK(!obs_property_modified(period,seconds));
+  obs_source_update(filter,seconds);
+  pump_at(start);
+  obs_data_set_double(seconds,"period",4);
+  CHECK(!obs_property_modified(period,seconds));
+  obs_source_update(filter,seconds);
+  pump_at(start);
+  obs_data_release(seconds);
+  obs_properties_destroy(seconds_properties);
   input(pedals, Kind::NoteOn, start + 1, channel + 1, note, 127);
   input("fixture:other pedals", Kind::NoteOn, start + 1, channel, note, 127);
   pump_at(start + 1);
@@ -177,6 +195,8 @@ static void test_midi(obs_source_t *source, modulator::MonitorFeed &feed)
   const auto stopped_value = gain();
   pump_at(start + 5);
   CHECK(gain() == stopped_value);
+  CHECK(property_refreshes==0);
+  signal_handler_disconnect(filter_signals,"update_properties",count_refresh,&property_refreshes);
   remove(filter);
 
   start += 20;
@@ -585,10 +605,10 @@ int main(int argc,char **argv) {
   shot_clock+=20;change(source,"gain",.93);lfo=fresh(11,false,true);
   CHECK(feed->play(obs_source_get_uuid(lfo)));at(shot_clock);at(shot_clock+100);
   CHECK(feed->sample()[0].state==MonitorState::Completed && feed->sample()[0].value==.93);remove(lfo);
-  // A property-status signal runs after calculation but before batch commit.
-  // Exercise genuine cancellation in that gap, rather than only before pump.
+  // Exercise cancellation after calculation and before batch commit. Playback
+  // no longer emits a property refresh, so use the test-only batch boundary.
   struct Interruption { obs_source_t *target; obs_source_t *controller; int action; bool fired=false; };
-  auto interrupt=[](void *p,calldata_t *) {
+  auto interrupt=[](void *p) {
     auto &x=*static_cast<Interruption *>(p);if(x.fired)return;x.fired=true;
     if(x.action==0)change(x.target,"gain",.777);
     if(x.action==1)obs_source_set_enabled(x.controller,false);
@@ -601,9 +621,8 @@ int main(int argc,char **argv) {
   for(int action=0;action<5;++action) {
     shot_clock+=200;change(source,"gain",.93);lfo=fresh(2,false,false);
     Interruption x{source,lfo,action};
-    signal_handler_connect(obs_source_get_signal_handler(lfo),"update_properties",interrupt,&x);
+    modulator::monitor_test_before_batch(interrupt,&x);
     CHECK(feed->play(obs_source_get_uuid(lfo)));at(shot_clock);CHECK(x.fired);
-    signal_handler_disconnect(obs_source_get_signal_handler(lfo),"update_properties",interrupt,&x);
     auto *readback=obs_source_get_settings(source);
     CHECK(obs_data_get_double(readback,"gain")== (action==0 ? .777:.93));obs_data_release(readback);
     if(action==4)CHECK(!feed->sample()[0].available);
